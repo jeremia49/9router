@@ -758,15 +758,22 @@ export default function ProviderDetailPage() {
     return applyProxyAssignments(targets);
   };
 
-  const handleApplyOneToOne = () => {
+  const handleApplyRandomPools = () => {
     const activePools = proxyPools.filter((p) => p.isActive === true);
     if (activePools.length === 0) {
       alert("No active proxy pools available.");
       return;
     }
+
+    const shuffledPools = [...activePools];
+    for (let i = shuffledPools.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffledPools[i], shuffledPools[j]] = [shuffledPools[j], shuffledPools[i]];
+    }
+    const randomOffset = Math.floor(Math.random() * shuffledPools.length);
     const targets = connections.map((c, i) => ({
       connectionId: c.id,
-      proxyPoolId: activePools[i % activePools.length].id,
+      proxyPoolId: shuffledPools[(i + randomOffset) % shuffledPools.length].id,
     }));
     return applyProxyAssignments(targets);
   };
@@ -831,12 +838,12 @@ export default function ProviderDetailPage() {
       <div className="flex flex-col gap-3">
         <div className="flex flex-col">
           <button
-            onClick={handleApplyOneToOne}
+            onClick={handleApplyRandomPools}
             disabled={bulkUpdatingProxy || activePools.length === 0}
             className="flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <span className="material-symbols-outlined text-text-muted text-[18px]">sync_alt</span>
-            <span className="text-sm text-text-main">One-to-one (rotate)</span>
+            <span className="material-symbols-outlined text-text-muted text-[18px]">shuffle</span>
+            <span className="text-sm text-text-main">Random per connection</span>
           </button>
           <button
             onClick={() => handleApplySinglePool(null)}
