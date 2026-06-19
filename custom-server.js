@@ -49,6 +49,10 @@ function startBackgroundTokenRefreshFromCustomServer() {
 // Wrap Next standalone HTTP server: derive client IP from the TCP socket
 // (unspoofable) and strip client-supplied forwarding headers so downstream
 // rate-limiting keys on the real peer address instead of attacker-controlled XFF.
+// When running behind a local reverse proxy (e.g. Caddy/nginx on loopback),
+// use its forwarding headers to recover the client IP. Public TCP peers cannot
+// override their socket address with forwarding headers.
+
 http.createServer = (...args) => {
   const handler = args.find((a) => typeof a === "function");
   const rest = args.filter((a) => typeof a !== "function");
