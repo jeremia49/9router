@@ -202,6 +202,17 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
  */
 export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null) {
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
+
+  const providerId = provider ? resolveProviderId(provider) : null;
+  if (providerId) {
+    const settings = await getSettings();
+    const override = (settings.providerStrategies || {})[providerId] || {};
+    if (override.keepUnlockedOnFailure === true) {
+      log.warn("AUTH", `${providerId} | request failed but provider is configured to stay unlocked [${status}]`);
+      return { shouldFallback: false, cooldownMs: 0 };
+    }
+  }
+
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
   const backoffLevel = conn?.backoffLevel || 0;

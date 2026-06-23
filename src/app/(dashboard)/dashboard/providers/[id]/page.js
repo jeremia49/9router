@@ -57,6 +57,7 @@ export default function ProviderDetailPage() {
   const [bulkUpdatingProxy, setBulkUpdatingProxy] = useState(false);
   const [providerStrategy, setProviderStrategy] = useState(null);
   const [providerStickyLimit, setProviderStickyLimit] = useState("");
+  const [keepUnlockedOnFailure, setKeepUnlockedOnFailure] = useState(false);
   const [thinkingMode, setThinkingMode] = useState("auto");
   const [autoPing, setAutoPing] = useState({ enabled: false, connections: {} });
   const [suggestedModels, setSuggestedModels] = useState([]);
@@ -270,6 +271,7 @@ export default function ProviderDetailPage() {
       const override = (settingsData.providerStrategies || {})[providerId] || {};
       setProviderStrategy(override.fallbackStrategy || null);
       setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
+      setKeepUnlockedOnFailure(override.keepUnlockedOnFailure === true);
       // Load per-provider thinking config
       const thinkingCfg = (settingsData.providerThinking || {})[providerId] || {};
       setThinkingMode(thinkingCfg.mode || "auto");
@@ -318,18 +320,19 @@ export default function ProviderDetailPage() {
     }
   };
 
-  const saveProviderStrategy = async (strategy, stickyLimit) => {
+  const saveProviderStrategy = async (strategy, stickyLimit, keepUnlocked = keepUnlockedOnFailure) => {
     try {
       const settingsRes = await fetch("/api/settings", { cache: "no-store" });
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
       const current = settingsData.providerStrategies || {};
 
-      // Build override: null strategy means remove override, use global
+      // Build override: null strategy means remove fallback override, use global.
       const override = {};
       if (strategy) override.fallbackStrategy = strategy;
       if (strategy === "round-robin" && stickyLimit !== "") {
         override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
       }
+      if (keepUnlocked) override.keepUnlockedOnFailure = true;
 
       const updated = { ...current };
       if (Object.keys(override).length === 0) {
@@ -359,6 +362,11 @@ export default function ProviderDetailPage() {
   const handleStickyLimitChange = (value) => {
     setProviderStickyLimit(value);
     saveProviderStrategy("round-robin", value);
+  };
+
+  const handleKeepUnlockedToggle = (enabled) => {
+    setKeepUnlockedOnFailure(enabled);
+    saveProviderStrategy(providerStrategy, providerStickyLimit, enabled);
   };
 
   const saveThinkingConfig = async (mode) => {
@@ -1383,6 +1391,14 @@ export default function ProviderDetailPage() {
                     />
                   </div>
                 )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-text-muted font-medium">Stay unlocked on failed request</span>
+                <Toggle
+                  checked={keepUnlockedOnFailure}
+                  onChange={handleKeepUnlockedToggle}
+                />
+                <span className="text-xs text-text-muted">Skip cooldown/fallback model lock.</span>
               </div>
             </div>
           </div>
