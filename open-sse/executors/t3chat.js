@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { randomUUID } from "node:crypto";
 
 import { PROVIDERS } from "../config/providers.js";
 import { BaseExecutor } from "./base.js";
@@ -35,7 +35,7 @@ export class T3ChatExecutor extends BaseExecutor {
     return CHAT_URL;
   }
 
-  async execute({ model, body, stream, credentials, signal, log }) {
+  async execute({ model, body, credentials, signal, log }) {
     const threadId = randomUUID();
     const responseMessageId = randomUUID();
     const { cookies } = getT3ChatCredentials(credentials);
