@@ -55,7 +55,7 @@ export class T3ChatExecutor extends BaseExecutor {
 		return CHAT_URL;
 	}
 
-	async execute({ model, body, stream, credentials, signal, log }) {
+	async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
 		// VALIDATION: Ensure we're using wreq-js transport, not base executor's fetch
 		const threadId = randomUUID();
 		const responseMessageId = randomUUID();
@@ -68,12 +68,12 @@ export class T3ChatExecutor extends BaseExecutor {
 			threadId,
 			responseMessageId,
 		});
-
+		
 		// Create transport instance - this will validate wreq-js is loaded
 		const transport = transportFactory
 			? transportFactory()
 			: new T3ChatTransport();
-
+		
 		// Validate transport is T3ChatTransport (not a different HTTP client)
 		if (!(transport instanceof T3ChatTransport)) {
 			throw new Error(
@@ -99,6 +99,7 @@ export class T3ChatExecutor extends BaseExecutor {
 			headers,
 			json: transformedBody,
 			signal,
+			proxyOptions, // Pass proxyOptions to transport
 		});
 		
 		// Debug: Log response status and partial body
@@ -117,12 +118,47 @@ export class T3ChatExecutor extends BaseExecutor {
 		}
 		if (upstream.status === 429) {
 			const errorDetail = upstream.text ? `Response: ${upstream.text.substring(0, 500)}` : "No response body";
+			
+			// Check if this is Vercel Security Checkpoint (HTML response)
+			const isVercelCheckpoint = upstream.text && 
+				(upstream.text.includes("Vercel Security Checkpoint") || 
+				 upstream.text.includes("vercel-security") ||
+				 upstream.text.includes("data-astro-cid"));
+			
 			console.error("[T3CHAT-DEBUG] Rate Limit/Fingerprint Rejection:");
-			console.error("[T3CHAT-DEBUG] - This usually means:");
-			console.error("[T3CHAT-DEBUG]   1. Browser fingerprint not recognized (wreq-js issue)");
-			console.error("[T3CHAT-DEBUG]   2. IP address blocked/suspicious");
-			console.error("[T3CHAT-DEBUG]   3. Cookies expired or invalid");
-			console.error("[T3CHAT-DEBUG]   4. Rate limit exceeded");
+			
+			if (isVercelCheckpoint) {
+				console.error("[T3CHAT-DEBUG] *** VERCEL SECURITY CHECKPOINT DETECTED ***");
+				console.error("[T3CHAT-DEBUG] This is NOT T3Chat blocking you - it's Vercel's bot protection!");
+				console.error("[T3CHAT-DEBUG]");
+				console.error("[T3CHAT-DEBUG] Why this happens:");
+				console.error("[T3CHAT-DEBUG]   - T3Chat is hosted on Vercel");
+				console.error("[T3CHAT-DEBUG]   - Vercel detects your server IP as datacenter/VPS");
+				console.error("[T3CHAT-DEBUG]   - Vercel blocks non-residential IPs even with correct browser fingerprints");
+				console.error("[T3CHAT-DEBUG]");
+				console.error("[T3CHAT-DEBUG] SOLUTIONS:");
+				console.error("[T3CHAT-DEBUG]   1. Use a residential proxy (RECOMMENDED)");
+				console.error("[T3CHAT-DEBUG]      export T3CHAT_PROXY=http://residential-proxy:port");
+				console.error("[T3CHAT-DEBUG]   2. Use SSH tunnel from local machine (temporary)");
+				console.error("[T3CHAT-DEBUG]      ssh -R 20127:localhost:20127 user@server");
+				console.error("[T3CHAT-DEBUG]   3. Deploy to residential IP/VPS");
+				console.error("[T3CHAT-DEBUG]");
+				console.error("[T3CHAT-DEBUG] See VERCEL_SECURITY_CHECKPOINT_FIX.md for details");
+				
+				throw new Error(
+					"Vercel Security Checkpoint blocked the request. " +
+					"Your server IP is detected as datacenter/bot. " +
+					"Use a residential proxy or SSH tunnel. " +
+					"See VERCEL_SECURITY_CHECKPOINT_FIX.md for solutions."
+				);
+			} else {
+				console.error("[T3CHAT-DEBUG] - This usually means:");
+				console.error("[T3CHAT-DEBUG]   1. Browser fingerprint not recognized (wreq-js issue)");
+				console.error("[T3CHAT-DEBUG]   2. IP address blocked/suspicious");
+				console.error("[T3CHAT-DEBUG]   3. Cookies expired or invalid");
+				console.error("[T3CHAT-DEBUG]   4. Rate limit exceeded");
+			}
+			
 			console.error("[T3CHAT-DEBUG] Error Detail:", errorDetail);
 			throw new Error(
 				"T3Chat returned HTTP 429. This can mean rate limiting or browser-fingerprint rejection; retry later and refresh credentials if it persists. " + errorDetail,
