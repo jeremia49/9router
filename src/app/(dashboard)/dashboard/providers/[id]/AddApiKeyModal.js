@@ -151,41 +151,48 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     }
     if (isCompatible && !formData.defaultModel.trim()) return;
 
-    setSaving(true);
-    try {
-      let isValid = isT3Chat;
-      if (!isT3Chat) {
-        try {
-          setValidating(true);
-          setValidationResult(null);
-          const res = await fetch("/api/providers/validate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ provider, apiKey: formData.apiKey, providerSpecificData: buildProviderSpecificData() }),
-          });
-          const data = await res.json();
-          isValid = !!data.valid;
-          setValidationResult(isValid ? "success" : "failed");
-        } catch {
-          setValidationResult("failed");
-        } finally {
-          setValidating(false);
-        }
-      }
+		setSaving(true);
+		try {
+			let isValid = isT3Chat;
+			if (!isT3Chat) {
+				try {
+					setValidating(true);
+					setValidationResult(null);
+					const res = await fetch("/api/providers/validate", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							provider,
+							apiKey: formData.apiKey,
+							providerSpecificData: buildProviderSpecificData(),
+						}),
+					});
+					const data = await res.json();
+					isValid = !!data.valid;
+					setValidationResult(isValid ? "success" : "failed");
+				} catch {
+					setValidationResult("failed");
+				} finally {
+					setValidating(false);
+				}
+			}
 
-      await onSave({
-        name: formData.name || (isOllamaLocal ? "Ollama Local" : ""),
-        apiKey: formData.apiKey,
-        defaultModel: isCompatible ? formData.defaultModel.trim() : undefined,
-        priority: formData.priority,
-        proxyPoolId: formData.proxyPoolId === NONE_PROXY_POOL_VALUE ? null : formData.proxyPoolId,
-        testStatus: isValid ? "active" : "unknown",
-        providerSpecificData: buildProviderSpecificData()
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
+			await onSave({
+				name: formData.name || (isOllamaLocal ? "Ollama Local" : ""),
+				apiKey: formData.apiKey,
+				defaultModel: isCompatible ? formData.defaultModel.trim() : undefined,
+				priority: formData.priority,
+				proxyPoolId:
+					formData.proxyPoolId === NONE_PROXY_POOL_VALUE
+						? null
+						: formData.proxyPoolId,
+				testStatus: isValid ? "active" : "unknown",
+				providerSpecificData: buildProviderSpecificData(),
+			});
+		} finally {
+			setSaving(false);
+		}
+	};
 
   const handleBulkSubmit = async () => {
     const lines = bulkText.split("\n");
@@ -258,7 +265,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     if (success > 0 && onBulkDone) onBulkDone();
   };
 
-  if (!provider) return null;
+	if (!provider) return null;
 
   return (
     <Modal isOpen={isOpen} title={`Add ${providerName || provider} ${credentialLabel}`} onClose={onClose}>
@@ -504,33 +511,45 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
           </div>
         )}
 
-        <Input
-          label="Priority"
-          type="number"
-          value={formData.priority}
-          onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value) || 1 })}
-        />
+						<Input
+							label="Priority"
+							type="number"
+							value={formData.priority}
+							onChange={(e) =>
+								setFormData({
+									...formData,
+									priority: Number.parseInt(e.target.value) || 1,
+								})
+							}
+						/>
 
-        <Select
-          label="Proxy Pool"
-          value={formData.proxyPoolId}
-          onChange={(e) => setFormData({ ...formData, proxyPoolId: e.target.value })}
-          options={[
-            { value: NONE_PROXY_POOL_VALUE, label: "None" },
-            ...(proxyPools || []).map((pool) => ({ value: pool.id, label: pool.name })),
-          ]}
-          placeholder="None"
-        />
+						<Select
+							label="Proxy Pool"
+							value={formData.proxyPoolId}
+							onChange={(e) =>
+								setFormData({ ...formData, proxyPoolId: e.target.value })
+							}
+							options={[
+								{ value: NONE_PROXY_POOL_VALUE, label: "None" },
+								...(proxyPools || []).map((pool) => ({
+									value: pool.id,
+									label: pool.name,
+								})),
+							]}
+							placeholder="None"
+						/>
 
-        {(proxyPools || []).length === 0 && (
-          <p className="text-xs text-text-muted">
-            No active proxy pools available. Create one in Proxy Pools page first.
-          </p>
-        )}
+						{(proxyPools || []).length === 0 && (
+							<p className="text-xs text-text-muted">
+								No active proxy pools available. Create one in Proxy Pools page
+								first.
+							</p>
+						)}
 
-        <p className="text-xs text-text-muted">
-          Legacy manual proxy fields are still accepted by API for backward compatibility.
-        </p>
+						<p className="text-xs text-text-muted">
+							Legacy manual proxy fields are still accepted by API for backward
+							compatibility.
+						</p>
 
         <div className="flex gap-2">
           <Button onClick={handleSubmit} fullWidth disabled={saving || (!isOllamaLocal && (!formData.name || !apiKeySatisfied())) || (isT3Chat && !formData.convexSessionId.trim()) || (isCompatible && !formData.defaultModel.trim()) || (isAzure && (!azureData.azureEndpoint || !azureData.deployment || !azureData.organization)) || (isCloudflareAi && !cloudflareData.accountId)}>
