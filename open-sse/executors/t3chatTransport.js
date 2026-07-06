@@ -95,15 +95,31 @@ export class T3ChatTransport {
 		return this.fetchFn;
 	}
 
-	async post(url, { headers, json, signal } = {}) {
+	async post(url, { headers, json, signal, proxyOptions = null } = {}) {
 		const fetchFn = await this.getFetch();
 		
 		console.log("[T3CHAT-TRANSPORT-DEBUG] Making POST request to:", url);
 		console.log("[T3CHAT-TRANSPORT-DEBUG] Browser fingerprint: chrome_136 / windows");
 		console.log("[T3CHAT-TRANSPORT-DEBUG] Timeout:", this.timeoutMs, "ms");
+		
+		// Determine proxy from multiple sources (priority order):
+		// 1. proxyOptions from credentials (highest priority)
+		// 2. T3CHAT_PROXY environment variable
+		// 3. HTTPS_PROXY environment variable
+		let proxyUrl = null;
+		
+		if (proxyOptions?.connectionProxyEnabled && proxyOptions?.connectionProxyUrl) {
+			proxyUrl = proxyOptions.connectionProxyUrl;
+			console.log("[T3CHAT-TRANSPORT-DEBUG] Using proxy from credentials:", proxyUrl.replace(/:\/\/.*@/, "://***@"));
+		} else {
+			proxyUrl = process.env.T3CHAT_PROXY || process.env.HTTPS_PROXY || process.env.https_proxy;
+			if (proxyUrl) {
+				console.log("[T3CHAT-TRANSPORT-DEBUG] Using proxy from environment:", proxyUrl.replace(/:\/\/.*@/, "://***@"));
+			}
+		}
 
 		try {
-			const response = await fetchFn(url, {
+			const options = {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
@@ -114,7 +130,14 @@ export class T3ChatTransport {
 				os: "windows",
 				timeout: this.timeoutMs,
 				signal,
-			});
+			};
+			
+			// Add proxy if configured (helps bypass Vercel Security Checkpoint)
+			if (proxyUrl) {
+				options.proxy = proxyUrl;
+			}
+			
+			const response = await fetchFn(url, options);
 			
 			console.log("[T3CHAT-TRANSPORT-DEBUG] Response status:", response.status);
 			console.log("[T3CHAT-TRANSPORT-DEBUG] Response headers:", response.headers ? Object.fromEntries([...response.headers.entries()].slice(0, 5)) : "none");
@@ -153,17 +176,37 @@ export class T3ChatTransport {
 		}
 	}
 
-	async get(url, { headers, signal } = {}) {
+	async get(url, { headers, signal, proxyOptions = null } = {}) {
 		const fetchFn = await this.getFetch();
-
-		const response = await fetchFn(url, {
+		
+		// Determine proxy from multiple sources
+		let proxyUrl = null;
+		
+		if (proxyOptions?.connectionProxyEnabled && proxyOptions?.connectionProxyUrl) {
+			proxyUrl = proxyOptions.connectionProxyUrl;
+			console.log("[T3CHAT-TRANSPORT-DEBUG] GET using proxy from credentials:", proxyUrl.replace(/:\/\/.*@/, "://***@"));
+		} else {
+			proxyUrl = process.env.T3CHAT_PROXY || process.env.HTTPS_PROXY || process.env.https_proxy;
+			if (proxyUrl) {
+				console.log("[T3CHAT-TRANSPORT-DEBUG] GET using proxy from environment:", proxyUrl.replace(/:\/\/.*@/, "://***@"));
+			}
+		}
+		
+		const options = {
 			method: "GET",
 			headers: headers || {},
 			browser: "chrome_136",
 			os: "windows",
 			timeout: this.timeoutMs,
 			signal,
-		});
+		};
+		
+		// Add proxy if configured (helps bypass Vercel Security Checkpoint)
+		if (proxyUrl) {
+			options.proxy = proxyUrl;
+		}
+
+		const response = await fetchFn(url, options);
 
 		const text = await response.text();
 		return {

@@ -106,6 +106,7 @@ export function parseT3ChatSubscriptionData(data = {}) {
 export async function fetchT3ChatQuota({
 	cookies,
 	transport = new T3ChatTransport(),
+	proxyOptions = null,
 }) {
 	const lastCheckedAt = Date.now();
 
@@ -120,10 +121,11 @@ export async function fetchT3ChatQuota({
 
 		const customerResponse = await transport.get(T3CHAT_CUSTOMER_DATA_URL, {
 			headers,
+			proxyOptions,
 		});
 		const subscriptionResponse = await transport.get(
 			T3CHAT_SUBSCRIPTION_DATA_URL,
-			{ headers },
+			{ headers, proxyOptions },
 		);
 		const customer = extractT3ChatTrpcResult(customerResponse.text);
 		const subscription = extractT3ChatTrpcResult(subscriptionResponse.text);
