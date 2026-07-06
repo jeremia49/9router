@@ -3,12 +3,15 @@ import { randomUUID } from "node:crypto";
 import { PROVIDERS } from "../config/providers.js";
 import { BaseExecutor } from "./base.js";
 import { parseT3ChatTextResponse } from "./t3chatParser.js";
+import { parseT3ChatFullResponse } from "./t3chatParserFull.js";
 import {
 	buildT3ChatHeaders,
 	buildT3ChatPayload,
 	getT3ChatCredentials,
 } from "./t3chatPayload.js";
 import { T3ChatTransport } from "./t3chatTransport.js";
+// Tool calling support - imported but used in payload building
+import "./t3chatTools.js";
 
 /**
  * T3Chat Executor - MUST use wreq-js HTTP client exclusively
@@ -266,16 +269,74 @@ export class T3ChatExecutor extends BaseExecutor {
 				// Read the streaming response as text
 				sseText = await upstream.response.text();
 			}
-			const text = parseT3ChatTextResponse(sseText);
-			return {
-				response: createTextResponse(text, 200, model),
-				url: CHAT_URL,
-				headers,
-				transformedBody,
-			};
+
+			const tools = body?.tools;
+			const hasTools = tools && Array.isArray(tools) && tools.length > 0;
+
+			if (hasTools) {
+				// Parse full response with tool calls and reasoning
+				const parsed = parseT3ChatFullResponse(sseText);
+				const assistantMessage = {
+					role: "assistant",
+					content: parsed.text,
+				};
+
+				// Add reasoning if present
+				if (parsed.reasoning) {
+					assistantMessage.reasoning = parsed.reasoning;
+					assistantMessage.reasoning_content = parsed.reasoning;
+				}
+
+				// Add tool calls if present
+				if (parsed.toolCalls && parsed.toolCalls.length > 0) {
+					assistantMessage.tool_calls = parsed.toolCalls.map((tc) => ({
+						id: tc.id,
+						type: "function",
+						function: {
+							name: tc.name,
+							arguments: tc.arguments,
+						},
+					}));
+				}
+
+				return {
+					response: new Response(
+						JSON.stringify({
+							id: `chatcmpl-${randomUUID()}`,
+							object: "chat.completion",
+							created: Math.floor(Date.now() / 1000),
+							model,
+							choices: [
+								{
+									index: 0,
+									message: assistantMessage,
+									finish_reason: parsed.finishReason,
+								},
+							],
+						}),
+						{
+							status: 200,
+							headers: { "Content-Type": "application/json" },
+						},
+					),
+					url: CHAT_URL,
+					headers,
+					transformedBody,
+				};
+			} else {
+				// Simple text-only response
+				const text = parseT3ChatTextResponse(sseText);
+				return {
+					response: createTextResponse(text, 200, model),
+					url: CHAT_URL,
+					headers,
+					transformedBody,
+				};
+			}
 		}
 
 		// For streaming, return the Response directly but convert T3Chat SSE to OpenAI format
+
 		const transformedStream = upstream.response.body.pipeThrough(
 			new TransformStream({
 				transform(chunk, controller) {
@@ -314,6 +375,102 @@ export class T3ChatExecutor extends BaseExecutor {
 								controller.enqueue(
 									new TextEncoder().encode(
 										`data: ${JSON.stringify(finishChunk)}\n\n`,
+									),
+								);
+								continue;
+							}
+
+							// Handle reasoning deltas
+							if (value.type === "reasoning-delta") {
+								const reasoningText = value.text || value.delta || "";
+								if (reasoningText) {
+									const reasoningChunk = {
+										id: `chatcmpl-${responseMessageId}`,
+										object: "chat.completion.chunk",
+										created: Math.floor(Date.now() / 1000),
+										model,
+										choices: [
+											{
+												index: 0,
+												delta: {
+													reasoning: reasoningText,
+													reasoning_content: reasoningText,
+												},
+												finish_reason: null,
+											},
+										],
+									};
+									controller.enqueue(
+										new TextEncoder().encode(
+											`data: ${JSON.stringify(reasoningChunk)}\n\n`,
+										),
+									);
+								}
+								continue;
+							}
+
+							// Handle tool call start
+							if (value.type === "tool-input-start") {
+								const toolCallChunk = {
+									id: `chatcmpl-${responseMessageId}`,
+									object: "chat.completion.chunk",
+									created: Math.floor(Date.now() / 1000),
+									model,
+									choices: [
+										{
+											index: 0,
+											delta: {
+												tool_calls: [
+													{
+														index: 0,
+														id: value.id,
+														type: "function",
+														function: {
+															name: value.name,
+															arguments: "",
+														},
+													},
+												],
+											},
+											finish_reason: null,
+										},
+									],
+								};
+								controller.enqueue(
+									new TextEncoder().encode(
+										`data: ${JSON.stringify(toolCallChunk)}\n\n`,
+									),
+								);
+								continue;
+							}
+
+							// Handle tool call arguments
+							if (value.type === "tool-input-available") {
+								const argsChunk = {
+									id: `chatcmpl-${responseMessageId}`,
+									object: "chat.completion.chunk",
+									created: Math.floor(Date.now() / 1000),
+									model,
+									choices: [
+										{
+											index: 0,
+											delta: {
+												tool_calls: [
+													{
+														index: 0,
+														function: {
+															arguments: value.input || "",
+														},
+													},
+												],
+											},
+											finish_reason: null,
+										},
+									],
+								};
+								controller.enqueue(
+									new TextEncoder().encode(
+										`data: ${JSON.stringify(argsChunk)}\n\n`,
 									),
 								);
 								continue;
