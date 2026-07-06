@@ -1,15 +1,27 @@
 async function loadWreqFetch() {
 	try {
+		console.log("[T3CHAT-WREQ-DEBUG] Attempting to load wreq-js module...");
+		console.log("[T3CHAT-WREQ-DEBUG] Node version:", process.version);
+		console.log("[T3CHAT-WREQ-DEBUG] Platform:", process.platform, process.arch);
+		
 		const mod = await import("wreq-js");
+		console.log("[T3CHAT-WREQ-DEBUG] wreq-js module loaded");
+		console.log("[T3CHAT-WREQ-DEBUG] Module keys:", Object.keys(mod));
+		
 		const fetchFn = mod.fetch || mod.default?.fetch || mod;
 		if (!fetchFn || typeof fetchFn !== "function") {
+			console.error("[T3CHAT-WREQ-DEBUG] wreq-js did not export a valid fetch function");
+			console.error("[T3CHAT-WREQ-DEBUG] Exported:", typeof fetchFn);
 			throw new Error(
 				"T3Chat provider requires wreq-js but it failed to load properly. " +
 					"Install wreq-js: npm install wreq-js",
 			);
 		}
+		console.log("[T3CHAT-WREQ-DEBUG] wreq-js fetch function validated");
 		return fetchFn;
 	} catch (error) {
+		console.error("[T3CHAT-WREQ-DEBUG] Failed to load wreq-js:", error.message);
+		console.error("[T3CHAT-WREQ-DEBUG] Error code:", error.code);
 		if (
 			error.code === "ERR_MODULE_NOT_FOUND" ||
 			error.message.includes("Cannot find")
@@ -65,19 +77,30 @@ export class T3ChatTransport {
 
 	async getFetch() {
 		if (this.fetchFn) return this.fetchFn;
+		
+		console.log("[T3CHAT-TRANSPORT-DEBUG] Loading wreq-js...");
 		this.fetchFn = await loadWreqFetch();
+		console.log("[T3CHAT-TRANSPORT-DEBUG] wreq-js loaded successfully");
+		
 		// Verify this is wreq-js, not native fetch or other HTTP client
 		if (this.fetchFn === globalThis.fetch || this.fetchFn === global.fetch) {
+			console.error("[T3CHAT-TRANSPORT-DEBUG] ERROR: Detected native fetch instead of wreq-js!");
 			throw new Error(
 				"T3Chat provider detected non-wreq fetch. " +
 					"T3Chat MUST use wreq-js exclusively. Check wreq-js installation.",
 			);
 		}
+		
+		console.log("[T3CHAT-TRANSPORT-DEBUG] Validated: Using wreq-js (not native fetch)");
 		return this.fetchFn;
 	}
 
 	async post(url, { headers, json, signal } = {}) {
 		const fetchFn = await this.getFetch();
+		
+		console.log("[T3CHAT-TRANSPORT-DEBUG] Making POST request to:", url);
+		console.log("[T3CHAT-TRANSPORT-DEBUG] Browser fingerprint: chrome_136 / windows");
+		console.log("[T3CHAT-TRANSPORT-DEBUG] Timeout:", this.timeoutMs, "ms");
 
 		try {
 			const response = await fetchFn(url, {
@@ -92,10 +115,14 @@ export class T3ChatTransport {
 				timeout: this.timeoutMs,
 				signal,
 			});
+			
+			console.log("[T3CHAT-TRANSPORT-DEBUG] Response status:", response.status);
+			console.log("[T3CHAT-TRANSPORT-DEBUG] Response headers:", response.headers ? Object.fromEntries([...response.headers.entries()].slice(0, 5)) : "none");
 
 			// For error responses, read the body as text first
 			if (response.status >= 400) {
 				const text = await response.text();
+				console.error("[T3CHAT-TRANSPORT-DEBUG] Error response body:", text.substring(0, 300));
 				return {
 					status: response.status,
 					text,
@@ -104,6 +131,7 @@ export class T3ChatTransport {
 
 			// For streaming responses, return the response directly
 			if (response.body && typeof response.body.getReader === "function") {
+				console.log("[T3CHAT-TRANSPORT-DEBUG] Streaming response detected");
 				return {
 					status: response.status,
 					response: response,
@@ -113,11 +141,14 @@ export class T3ChatTransport {
 
 			// For non-streaming, read the text
 			const text = await response.text();
+			console.log("[T3CHAT-TRANSPORT-DEBUG] Non-streaming response length:", text.length);
 			return {
 				status: response.status,
 				text,
 			};
 		} catch (error) {
+			console.error("[T3CHAT-TRANSPORT-DEBUG] Request failed:", error.message);
+			console.error("[T3CHAT-TRANSPORT-DEBUG] Error stack:", error.stack);
 			throw error;
 		}
 	}
