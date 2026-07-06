@@ -7,14 +7,40 @@ export const T3CHAT_SUBSCRIPTION_DATA_URL =
 
 function collectCandidates(value, candidates) {
 	if (!value || typeof value !== "object") return;
+
+	// Handle TRPC nested array format: [2,0,[[{...data...}]]]
+	if (Array.isArray(value)) {
+		// Check if this is a TRPC response array [2,0,[[{...}]]]
+		if (value.length >= 3 && Array.isArray(value[2])) {
+			const nestedData = value[2];
+			if (Array.isArray(nestedData[0]) && nestedData[0].length > 0) {
+				const innerData = nestedData[0][0];
+				if (
+					innerData &&
+					typeof innerData === "object" &&
+					!Array.isArray(innerData)
+				) {
+					// Only add if it has meaningful T3Chat fields (not just {result:0} or {data:0})
+					if (
+						innerData.subTier ||
+						innerData.balance !== undefined ||
+						innerData.isPaid !== undefined
+					) {
+						candidates.push(innerData);
+					}
+				}
+			}
+		}
+		// Recursively check array items
+		value.forEach((item) => collectCandidates(item, candidates));
+		return;
+	}
+
 	if (value.result?.data?.json && typeof value.result.data.json === "object") {
 		candidates.push(value.result.data.json);
 	}
 	if (value.json && typeof value.json === "object") {
-		candidates.push(value.json);
-	}
-	if (Array.isArray(value)) {
-		value.forEach((item) => collectCandidates(item, candidates));
+		collectCandidates(value.json, candidates);
 	}
 }
 

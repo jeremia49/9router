@@ -44,7 +44,7 @@ export class T3ChatExecutor extends BaseExecutor {
 		return CHAT_URL;
 	}
 
-	async execute({ model, body, credentials, signal, log }) {
+	async execute({ model, body, stream, credentials, signal, log }) {
 		const threadId = randomUUID();
 		const responseMessageId = randomUUID();
 		const { cookies } = getT3ChatCredentials(credentials);
@@ -61,6 +61,9 @@ export class T3ChatExecutor extends BaseExecutor {
 			: new T3ChatTransport();
 
 		log?.debug?.("FETCH", `T3CHAT → ${CHAT_URL}`);
+
+		// T3Chat always returns SSE, so we use transport.post for both streaming and non-streaming
+		// The transport returns a native Response object that 9router can handle
 		const upstream = await transport.post(CHAT_URL, {
 			headers,
 			json: transformedBody,
@@ -78,12 +81,135 @@ export class T3ChatExecutor extends BaseExecutor {
 			);
 		}
 		if (upstream.status >= 400) {
-			throw new Error(`T3Chat returned HTTP ${upstream.status}.`);
+			// Error text already read by transport
+			const errorText = upstream.text || "";
+			throw new Error(
+				`T3Chat returned HTTP ${upstream.status}. ${errorText ? "Error: " + errorText.substring(0, 200) : ""}`,
+			);
 		}
 
-		const text = parseT3ChatTextResponse(upstream.text);
+		// For non-streaming, read the SSE stream and parse into a completion
+		if (!stream) {
+			// T3Chat always returns SSE, so we need to read the stream
+			let sseText = upstream.text;
+			if (!sseText && upstream.response) {
+				// Read the streaming response as text
+				sseText = await upstream.response.text();
+			}
+			const text = parseT3ChatTextResponse(sseText);
+			return {
+				response: createTextResponse(text, 200, model),
+				url: CHAT_URL,
+				headers,
+				transformedBody,
+			};
+		}
+
+		// For streaming, return the Response directly but convert T3Chat SSE to OpenAI format
+		const transformedStream = upstream.response.body.pipeThrough(
+			new TransformStream({
+				transform(chunk, controller) {
+					const text = new TextDecoder().decode(chunk);
+					const lines = text.split("\n");
+
+					for (const line of lines) {
+						const trimmed = line.trim();
+						if (!trimmed.startsWith("data:")) continue;
+
+						const data = trimmed.slice("data:".length).trim();
+						if (data === "[DONE]") {
+							// Pass through [DONE]
+							controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+							continue;
+						}
+
+						try {
+							const value = JSON.parse(data);
+
+							// Handle finish events - send final chunk with finish_reason
+							if (value.type === "finish") {
+								const finishChunk = {
+									id: `chatcmpl-${responseMessageId}`,
+									object: "chat.completion.chunk",
+									created: Math.floor(Date.now() / 1000),
+									model,
+									choices: [
+										{
+											index: 0,
+											delta: {},
+											finish_reason: value.finishReason || "stop",
+										},
+									],
+								};
+								controller.enqueue(
+									new TextEncoder().encode(
+										`data: ${JSON.stringify(finishChunk)}\n\n`,
+									),
+								);
+								continue;
+							}
+
+							if (value.type === "text-delta" || value.type === "text") {
+								// Extract text content from T3Chat format
+								let textContent = "";
+								if (typeof value.delta === "string") {
+									textContent = value.delta;
+								} else if (
+									value.delta &&
+									typeof value.delta === "object" &&
+									typeof value.delta.text === "string"
+								) {
+									textContent = value.delta.text;
+								} else if (typeof value.text === "string") {
+									textContent = value.text;
+								} else if (Array.isArray(value.content)) {
+									for (const item of value.content) {
+										if (item && typeof item.text === "string") {
+											textContent += item.text;
+										}
+									}
+								}
+
+								if (textContent) {
+									// Convert to OpenAI streaming format
+									const openaiChunk = {
+										id: `chatcmpl-${responseMessageId}`,
+										object: "chat.completion.chunk",
+										created: Math.floor(Date.now() / 1000),
+										model,
+										choices: [
+											{
+												index: 0,
+												delta: { content: textContent },
+												finish_reason: null,
+											},
+										],
+									};
+									controller.enqueue(
+										new TextEncoder().encode(
+											`data: ${JSON.stringify(openaiChunk)}\n\n`,
+										),
+									);
+								}
+							}
+						} catch {
+							// Skip invalid JSON
+						}
+					}
+				},
+			}),
+		);
+
 		return {
-			response: createTextResponse(text, 200, model),
+			response: new Response(transformedStream, {
+				status: upstream.response.status,
+				statusText: upstream.response.statusText,
+				headers: {
+					"Content-Type": "text/event-stream",
+					"Cache-Control": "no-cache",
+					Connection: "keep-alive",
+				},
+			}),
 			url: CHAT_URL,
 			headers,
 			transformedBody,
