@@ -41,5 +41,20 @@ export function normalizeProviderSpecificData(provider, body = {}, providerSpeci
     if (baseUrl) next.baseUrl = baseUrl;
   }
 
+  if (provider === "t3chat") {
+    const cookies = String(next.cookies || body.cookies || "").trim();
+    const convexSessionId = String(
+      next.convexSessionId ||
+      next.convex_session_id ||
+      body.convexSessionId ||
+      body.convex_session_id ||
+      ""
+    ).trim();
+
+    if (cookies) next.cookies = cookies;
+    if (convexSessionId) next.convexSessionId = convexSessionId;
+    delete next.convex_session_id;
+  }
+
   return Object.keys(next).length > 0 ? next : null;
 }
