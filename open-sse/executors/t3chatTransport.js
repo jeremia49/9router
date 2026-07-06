@@ -53,8 +53,7 @@ export class T3ChatTransport {
 
 		const response = await client.post(url, {
 			headers,
-			json,
-			body: json,
+			body: JSON.stringify(json),
 			timeout: this.timeoutMs,
 			signal,
 			emulation: "chrome136",
