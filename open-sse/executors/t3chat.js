@@ -83,6 +83,15 @@ export class T3ChatExecutor extends BaseExecutor {
 		}
 
 		log?.debug?.("FETCH", `T3CHAT → ${CHAT_URL}`);
+		
+		// Debug: Log headers being sent (mask sensitive data)
+		const debugHeaders = { ...headers };
+		if (debugHeaders.Cookie) {
+			debugHeaders.Cookie = `${debugHeaders.Cookie.substring(0, 50)}... (${debugHeaders.Cookie.length} chars)`;
+		}
+		console.log("[T3CHAT-DEBUG] Request Headers:", JSON.stringify(debugHeaders, null, 2));
+		console.log("[T3CHAT-DEBUG] Request Model:", model);
+		console.log("[T3CHAT-DEBUG] Request Body Keys:", Object.keys(transformedBody));
 
 		// T3Chat always returns SSE, so we use transport.post for both streaming and non-streaming
 		// The transport returns a native Response object that 9router can handle
@@ -91,15 +100,32 @@ export class T3ChatExecutor extends BaseExecutor {
 			json: transformedBody,
 			signal,
 		});
+		
+		// Debug: Log response status and partial body
+		console.log("[T3CHAT-DEBUG] Response Status:", upstream.status);
+		if (upstream.text) {
+			const preview = upstream.text.substring(0, 500);
+			console.log("[T3CHAT-DEBUG] Response Body Preview:", preview);
+		}
 
 		if (upstream.status === 401 || upstream.status === 403) {
+			const errorDetail = upstream.text ? `Response: ${upstream.text.substring(0, 200)}` : "No response body";
+			console.error("[T3CHAT-DEBUG] Auth Error:", errorDetail);
 			throw new Error(
-				"T3Chat rejected the provided session. Refresh cookies and convexSessionId.",
+				"T3Chat rejected the provided session. Refresh cookies and convexSessionId. " + errorDetail,
 			);
 		}
 		if (upstream.status === 429) {
+			const errorDetail = upstream.text ? `Response: ${upstream.text.substring(0, 500)}` : "No response body";
+			console.error("[T3CHAT-DEBUG] Rate Limit/Fingerprint Rejection:");
+			console.error("[T3CHAT-DEBUG] - This usually means:");
+			console.error("[T3CHAT-DEBUG]   1. Browser fingerprint not recognized (wreq-js issue)");
+			console.error("[T3CHAT-DEBUG]   2. IP address blocked/suspicious");
+			console.error("[T3CHAT-DEBUG]   3. Cookies expired or invalid");
+			console.error("[T3CHAT-DEBUG]   4. Rate limit exceeded");
+			console.error("[T3CHAT-DEBUG] Error Detail:", errorDetail);
 			throw new Error(
-				"T3Chat returned HTTP 429. This can mean rate limiting or browser-fingerprint rejection; retry later and refresh credentials if it persists.",
+				"T3Chat returned HTTP 429. This can mean rate limiting or browser-fingerprint rejection; retry later and refresh credentials if it persists. " + errorDetail,
 			);
 		}
 		if (upstream.status >= 400) {
