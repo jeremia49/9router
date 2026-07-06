@@ -46,6 +46,58 @@ describe("T3Chat payload helpers", () => {
 		).toThrow("T3Chat cookies and convexSessionId are required");
 	});
 
+	it("merges system messages into user messages", () => {
+		const messages = [
+			{ role: "system", content: "You are a helpful assistant." },
+			{ role: "user", content: "Hello" },
+			{ role: "assistant", content: "Hi there!" },
+		];
+		const result = buildT3ChatPayload({
+			model: "gpt-4o",
+			body: { messages },
+			credentials,
+			threadId: "thread-1",
+			responseMessageId: "response-1",
+		}).messages;
+
+		expect(result).toHaveLength(2);
+		expect(result[0]).toMatchObject({
+			role: "user",
+			parts: [{ type: "text", text: "You are a helpful assistant.\n\nHello" }],
+			attachments: [],
+		});
+		expect(result[0].id).toBeTruthy();
+		expect(result[1]).toMatchObject({
+			role: "assistant",
+			parts: [{ type: "text", text: "Hi there!" }],
+			attachments: [],
+		});
+		expect(result[1].id).toBeTruthy();
+	});
+
+	it("converts tool messages to user messages", () => {
+		const messages = [
+			{ role: "user", content: "What's the weather?" },
+			{ role: "assistant", content: "Let me check." },
+			{ role: "tool", content: "Temperature: 72°F" },
+		];
+		const result = buildT3ChatPayload({
+			model: "gpt-4o",
+			body: { messages },
+			credentials,
+			threadId: "thread-1",
+			responseMessageId: "response-1",
+		}).messages;
+
+		expect(result).toHaveLength(3);
+		expect(result[2]).toMatchObject({
+			role: "user",
+			parts: [{ type: "text", text: "[Tool result: Temperature: 72°F]" }],
+			attachments: [],
+		});
+		expect(result[2].id).toBeTruthy();
+	});
+
 	it("builds headers", () => {
 		expect(
 			buildT3ChatHeaders({ cookies: "c=1", threadId: "thread-1" }),
@@ -68,7 +120,6 @@ describe("T3Chat payload helpers", () => {
 		});
 
 		expect(payload).toMatchObject({
-			messages: [{ role: "user", content: "hi" }],
 			threadMetadata: { id: "thread-1", title: "" },
 			clientAuth: { isSignedIn: true },
 			responseMessageId: "response-1",
@@ -101,5 +152,14 @@ describe("T3Chat payload helpers", () => {
 			userInfo: { timezone: "America/New_York", locale: "en-US" },
 			isEphemeral: false,
 		});
+
+		// Check message format
+		expect(payload.messages).toHaveLength(1);
+		expect(payload.messages[0]).toMatchObject({
+			role: "user",
+			parts: [{ type: "text", text: "hi" }],
+			attachments: [],
+		});
+		expect(payload.messages[0].id).toBeTruthy();
 	});
 });
