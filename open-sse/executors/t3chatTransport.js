@@ -1,6 +1,26 @@
 async function loadWreqFetch() {
-	const mod = await import("wreq-js");
-	return mod.fetch || mod.default?.fetch || mod;
+	try {
+		const mod = await import("wreq-js");
+		const fetchFn = mod.fetch || mod.default?.fetch || mod;
+		if (!fetchFn || typeof fetchFn !== "function") {
+			throw new Error(
+				"T3Chat provider requires wreq-js but it failed to load properly. " +
+					"Install wreq-js: npm install wreq-js",
+			);
+		}
+		return fetchFn;
+	} catch (error) {
+		if (
+			error.code === "ERR_MODULE_NOT_FOUND" ||
+			error.message.includes("Cannot find")
+		) {
+			throw new Error(
+				"T3Chat provider MUST use wreq-js HTTP client. " +
+					"wreq-js is not installed. Install it with: npm install wreq-js",
+			);
+		}
+		throw error;
+	}
 }
 
 export async function normalizeWreqResponse(response) {
@@ -17,15 +37,42 @@ export async function normalizeWreqResponse(response) {
 	return { status, text: String(text || "") };
 }
 
+/**
+ * T3ChatTransport - HTTP transport for T3Chat provider
+ *
+ * STRICT REQUIREMENT: This class MUST use wreq-js HTTP client exclusively.
+ * T3Chat requires browser-like TLS fingerprinting and headers that only wreq-js provides.
+ *
+ * This transport will:
+ * 1. Throw an error if wreq-js is not installed
+ * 2. Throw an error if wreq-js fails to load properly
+ * 3. Validate that the loaded fetch is wreq-js (not native fetch or other clients)
+ *
+ * DO NOT modify this to use:
+ * - Native fetch (global.fetch)
+ * - axios
+ * - got
+ * - node-fetch
+ * - undici
+ * - or any other HTTP client
+ */
 export class T3ChatTransport {
 	constructor({ timeoutMs = 60000 } = {}) {
 		this.timeoutMs = timeoutMs;
 		this.fetchFn = null;
+		this.provider = "t3chat";
 	}
 
 	async getFetch() {
 		if (this.fetchFn) return this.fetchFn;
 		this.fetchFn = await loadWreqFetch();
+		// Verify this is wreq-js, not native fetch or other HTTP client
+		if (this.fetchFn === globalThis.fetch || this.fetchFn === global.fetch) {
+			throw new Error(
+				"T3Chat provider detected non-wreq fetch. " +
+					"T3Chat MUST use wreq-js exclusively. Check wreq-js installation.",
+			);
+		}
 		return this.fetchFn;
 	}
 

@@ -268,6 +268,52 @@ exports[`GOLDEN buildHeaders (default executor providers) > cline → headers (a
 }
 `;
 
+exports[`GOLDEN buildHeaders (default executor providers) > clinepass → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://cline.bot",
+    "User-Agent": "9Router/0.5.18",
+    "X-CLIENT-TYPE": "9router",
+    "X-CLIENT-VERSION": "0.5.18",
+    "X-CORE-VERSION": "0.5.18",
+    "X-IS-MULTIROOT": "false",
+    "X-PLATFORM": "win32",
+    "X-PLATFORM-VERSION": "v22.23.1",
+    "X-Title": "Cline",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://cline.bot",
+    "User-Agent": "9Router/0.5.18",
+    "X-CLIENT-TYPE": "9router",
+    "X-CLIENT-VERSION": "0.5.18",
+    "X-CORE-VERSION": "0.5.18",
+    "X-IS-MULTIROOT": "false",
+    "X-PLATFORM": "win32",
+    "X-PLATFORM-VERSION": "v22.23.1",
+    "X-Title": "Cline",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://cline.bot",
+    "User-Agent": "9Router/0.5.18",
+    "X-CLIENT-TYPE": "9router",
+    "X-CLIENT-VERSION": "0.5.18",
+    "X-CORE-VERSION": "0.5.18",
+    "X-IS-MULTIROOT": "false",
+    "X-PLATFORM": "win32",
+    "X-PLATFORM-VERSION": "v22.23.1",
+    "X-Title": "Cline",
+  },
+}
+`;
+
 exports[`GOLDEN buildHeaders (default executor providers) > cloudflare-ai → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
@@ -535,6 +581,28 @@ exports[`GOLDEN buildHeaders (default executor providers) > kilocode → headers
     "Accept": "text/event-stream",
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
+  },
+}
+`;
+
+exports[`GOLDEN buildHeaders (default executor providers) > kimchi → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "User-Agent": "kimchi/0.1.50",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "User-Agent": "kimchi/0.1.50",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "User-Agent": "kimchi/0.1.50",
   },
 }
 `;
@@ -847,7 +915,45 @@ exports[`GOLDEN buildHeaders (default executor providers) > siliconflow → head
 }
 `;
 
+exports[`GOLDEN buildHeaders (default executor providers) > t3chat → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+}
+`;
+
 exports[`GOLDEN buildHeaders (default executor providers) > together → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+}
+`;
+
+exports[`GOLDEN buildHeaders (default executor providers) > venice → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
     "Accept": "text/event-stream",
@@ -1012,6 +1118,13 @@ exports[`GOLDEN buildUrl (default executor providers) > cline → url (stream + 
 }
 `;
 
+exports[`GOLDEN buildUrl (default executor providers) > clinepass → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://api.cline.bot/api/v1/chat/completions",
+  "stream": "https://api.cline.bot/api/v1/chat/completions",
+}
+`;
+
 exports[`GOLDEN buildUrl (default executor providers) > cloudflare-ai → url (stream + non-stream) 1`] = `
 {
   "nonStream": "https://api.cloudflare.com/client/v4/accounts/ACC123/ai/v1/chat/completions",
@@ -1100,6 +1213,13 @@ exports[`GOLDEN buildUrl (default executor providers) > kilocode → url (stream
 {
   "nonStream": "https://api.kilo.ai/api/openrouter/chat/completions",
   "stream": "https://api.kilo.ai/api/openrouter/chat/completions",
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > kimchi → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://llm.kimchi.dev/openai/v1/chat/completions",
+  "stream": "https://llm.kimchi.dev/openai/v1/chat/completions",
 }
 `;
 
@@ -1201,10 +1321,24 @@ exports[`GOLDEN buildUrl (default executor providers) > siliconflow → url (str
 }
 `;
 
+exports[`GOLDEN buildUrl (default executor providers) > t3chat → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://t3.chat/api/chat",
+  "stream": "https://t3.chat/api/chat",
+}
+`;
+
 exports[`GOLDEN buildUrl (default executor providers) > together → url (stream + non-stream) 1`] = `
 {
   "nonStream": "https://api.together.xyz/v1/chat/completions",
   "stream": "https://api.together.xyz/v1/chat/completions",
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > venice → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://api.venice.ai/api/v1/chat/completions",
+  "stream": "https://api.venice.ai/api/v1/chat/completions",
 }
 `;
 
