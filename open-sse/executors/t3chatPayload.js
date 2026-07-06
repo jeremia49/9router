@@ -15,77 +15,91 @@ export function getT3ChatCredentials(credentials = {}) {
 }
 
 export function toT3ChatMessages(messages = []) {
-	if (!Array.isArray(messages)) return [];
+	if (!Array.isArray(messages)) {
+		console.error(
+			"[T3CHAT-PAYLOAD-DEBUG] messages is not an array:",
+			typeof messages,
+		);
+		return [];
+	}
 
-	// T3Chat doesn't support system or tool roles, so we merge them into user messages
+	if (messages.length === 0) {
+		console.warn("[T3CHAT-PAYLOAD-DEBUG] Empty messages array provided");
+		return [];
+	}
+
+	// T3Chat ONLY supports 'user' and 'assistant' roles
+	// All other roles (system, tool, function) MUST be converted to 'user'
 	const result = [];
-	let pendingSystemContent = [];
 
 	for (const message of messages) {
+		if (!message || typeof message !== "object") {
+			console.error("[T3CHAT-PAYLOAD-DEBUG] Invalid message object:", message);
+			continue;
+		}
+
 		const role = message.role;
 		const content = message.content;
 
-		// System messages: accumulate and prepend to next user message
-		if (role === "system") {
-			pendingSystemContent.push(content);
+		// Skip messages with no content (except assistant which can be empty)
+		if (!content && role !== "assistant") {
+			console.warn(
+				"[T3CHAT-PAYLOAD-DEBUG] Message with no content, role:",
+				role,
+			);
 			continue;
 		}
 
-		// Tool/function messages: convert to user messages
-		if (role === "tool" || role === "function") {
-			result.push({
-				id: randomUUID(),
-				parts: [{ type: "text", text: `[Tool result: ${content}]` }],
-				role: "user",
-				attachments: [],
-			});
-			continue;
-		}
-
-		// User messages: prepend any pending system content
-		if (role === "user") {
-			let finalContent = content;
-			if (pendingSystemContent.length > 0) {
-				finalContent = pendingSystemContent.join("\n\n") + "\n\n" + content;
-				pendingSystemContent = [];
-			}
-			result.push({
-				id: randomUUID(),
-				parts: [{ type: "text", text: finalContent }],
-				role: "user",
-				attachments: [],
-			});
-			continue;
-		}
-
-		// Assistant messages: pass through
+		// Assistant messages: pass through as-is
 		if (role === "assistant") {
 			result.push({
 				id: randomUUID(),
-				parts: [{ type: "text", text: content }],
+				parts: [{ type: "text", text: content || "" }],
 				role: "assistant",
 				attachments: [],
 			});
 			continue;
 		}
 
-		// Unknown role: convert to user message
+		// ALL other roles (user, system, tool, function, etc.) -> convert to 'user'
+		let textContent = content;
+
+		// Add context prefix for non-user roles to preserve intent
+		if (role === "system") {
+			textContent = `[System instruction]: ${content}`;
+		} else if (role === "tool") {
+			textContent = `[Tool result]: ${content}`;
+		} else if (role === "function") {
+			textContent = `[Function result]: ${content}`;
+		}
+		// role === "user" uses content as-is
+
 		result.push({
 			id: randomUUID(),
-			parts: [{ type: "text", text: String(content || "") }],
+			parts: [{ type: "text", text: textContent }],
 			role: "user",
 			attachments: [],
 		});
 	}
 
-	// If there are pending system messages at the end, prepend them to a new user message
-	if (pendingSystemContent.length > 0) {
-		result.push({
-			id: randomUUID(),
-			parts: [{ type: "text", text: pendingSystemContent.join("\n\n") }],
-			role: "user",
-			attachments: [],
-		});
+	console.log(
+		"[T3CHAT-PAYLOAD-DEBUG] Transformed",
+		messages.length,
+		"input messages to",
+		result.length,
+		"T3Chat messages",
+	);
+	if (result.length > 0) {
+		console.log(
+			"[T3CHAT-PAYLOAD-DEBUG] First message role:",
+			result[0].role,
+			"parts count:",
+			result[0].parts.length,
+		);
+		console.log(
+			"[T3CHAT-PAYLOAD-DEBUG] Last message role:",
+			result[result.length - 1].role,
+		);
 	}
 
 	return result;
@@ -101,8 +115,23 @@ export function buildT3ChatPayload({
 	const { convexSessionId } = getT3ChatCredentials(credentials);
 	const reasoningEffort = body?.reasoning_effort || "medium";
 
+	// Validate messages array
+	const messages = toT3ChatMessages(body?.messages);
+	if (!Array.isArray(messages) || messages.length === 0) {
+		throw new Error("T3Chat requires at least one message in the request");
+	}
+
+	// Validate all messages have required structure
+	for (const msg of messages) {
+		if (!msg.id || !msg.role || !Array.isArray(msg.parts)) {
+			throw new Error(
+				"T3Chat message missing required fields (id, role, parts)",
+			);
+		}
+	}
+
 	return {
-		messages: toT3ChatMessages(body?.messages),
+		messages,
 		threadMetadata: { id: threadId, title: "" },
 		clientAuth: { isSignedIn: true },
 		responseMessageId,

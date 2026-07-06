@@ -959,6 +959,8 @@ case "llm7": {
         }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key", refreshed: false };
       }
+      case "t3chat":
+        return await testT3ChatConnection(connection, effectiveProxy);
       default:
         return { valid: false, error: "Provider test not supported" };
     }
@@ -1037,4 +1039,113 @@ export async function testSingleConnection(id) {
   await updateProviderConnection(id, updateData);
 
   return { valid: result.valid, error: result.error, refreshed: !!result.refreshed, latencyMs, testedAt: new Date().toISOString() };
+}
+
+async function testT3ChatConnection(connection, effectiveProxy = null) {
+	const psd = connection.providerSpecificData || {};
+	const cookies = connection.apiKey;
+	const convexSessionId = psd.convexSessionId || psd.convex_session_id;
+
+	if (!cookies || !convexSessionId) {
+		return { valid: false, error: "Missing cookies or convexSessionId" };
+	}
+
+	const randomUUID = () =>
+		"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+			const r = (Math.random() * 16) | 0;
+			const v = c === "x" ? r : (r & 0x3) | 0x8;
+			return v.toString(16);
+		});
+
+	const threadId = randomUUID();
+	const responseMessageId = randomUUID();
+
+	try {
+		const testRes = await fetchWithConnectionProxy(
+			"https://t3.chat/api/chat",
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Referer: `https://t3.chat/chat/${threadId}`,
+					Cookie: cookies,
+					Origin: "https://t3.chat",
+					Accept: "*/*",
+				},
+				body: JSON.stringify({
+					messages: [
+						{
+							id: randomUUID(),
+							parts: [{ type: "text", text: "hi" }],
+							role: "user",
+							attachments: [],
+						},
+					],
+					threadMetadata: { id: threadId, title: "" },
+					clientAuth: { isSignedIn: true },
+					responseMessageId,
+					model: "gemini-2.5-flash",
+					convexSessionId,
+					modelParams: {
+						reasoningEffort: "medium",
+						includeSearch: false,
+						searchLimit: 1,
+					},
+					preferences: {
+						name: "",
+						occupation: "",
+						selectedTraits: [],
+						additionalInfo: "",
+					},
+					userConfiguration: {
+						codeFont: "berkeley",
+						currentModelParameters: {
+							includeSearch: false,
+							reasoningEffort: "medium",
+						},
+						currentlySelectedModel: "gemini-2.5-flash",
+						favoriteModels: [],
+						hasMigrated: true,
+						mainFont: "proxima",
+						streamerMode: false,
+						theme: "dark",
+					},
+					userInfo: { timezone: "America/New_York", locale: "en-US" },
+					isEphemeral: false,
+				}),
+			},
+			effectiveProxy,
+		);
+
+		const contentType = testRes.headers.get("content-type") || "";
+		const isSSE = contentType.includes("text/event-stream");
+
+		if (testRes.status === 200 && isSSE) {
+			return { valid: true, error: null };
+		}
+
+		if (testRes.status === 401 || testRes.status === 403) {
+			return { valid: false, error: "Invalid cookies or session expired" };
+		}
+
+		if (testRes.status === 400) {
+			const bodyText = await testRes.text().catch(() => "");
+			return {
+				valid: false,
+				error: `Bad request: ${bodyText.substring(0, 200)}`,
+			};
+		}
+
+		if (testRes.status === 500) {
+			const bodyText = await testRes.text().catch(() => "");
+			return {
+				valid: false,
+				error: `Server error: ${bodyText.substring(0, 200)}`,
+			};
+		}
+
+		return { valid: false, error: `HTTP ${testRes.status}` };
+	} catch (err) {
+		return { valid: false, error: err.message };
+	}
 }
