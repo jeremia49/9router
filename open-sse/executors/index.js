@@ -23,43 +23,44 @@ import { DefaultExecutor } from "./default.js";
 import { T3ChatExecutor } from "./t3chat.js";
 
 const executors = {
-  antigravity: new AntigravityExecutor(),
-  azure: new AzureExecutor(),
-  "gemini-cli": new GeminiCLIExecutor(),
-  github: new GithubExecutor(),
-  iflow: new IFlowExecutor(),
-  qoder: new QoderExecutor(),
-  kiro: new KiroExecutor(),
-  kimchi: new KimchiExecutor(),
-  codex: new CodexExecutor(),
-  cursor: new CursorExecutor(),
-  cu: new CursorExecutor(), // Alias for cursor
-  vertex: new VertexExecutor("vertex"),
-  "vertex-partner": new VertexExecutor("vertex-partner"),
-  qwen: new QwenExecutor(),
-  opencode: new OpenCodeExecutor(),
-  "opencode-go": new OpenCodeGoExecutor(),
-  "grok-web": new GrokWebExecutor(),
-  "perplexity-web": new PerplexityWebExecutor(),
-  "ollama-local": new OllamaLocalExecutor(),
-  commandcode: new CommandCodeExecutor(),
-  "xiaomi-tokenplan": new XiaomiTokenplanExecutor(),
-  "mimo-free": new MimoFreeExecutor(),
-  mmf: new MimoFreeExecutor(), // Alias for mimo-free
-  "codebuddy-cn": new CodeBuddyExecutor(),
-  t3chat: new T3ChatExecutor(),
+	antigravity: new AntigravityExecutor(),
+	azure: new AzureExecutor(),
+	"gemini-cli": new GeminiCLIExecutor(),
+	github: new GithubExecutor(),
+	iflow: new IFlowExecutor(),
+	qoder: new QoderExecutor(),
+	kiro: new KiroExecutor(),
+	kimchi: new KimchiExecutor(),
+	codex: new CodexExecutor(),
+	cursor: new CursorExecutor(),
+	cu: new CursorExecutor(), // Alias for cursor
+	vertex: new VertexExecutor("vertex"),
+	"vertex-partner": new VertexExecutor("vertex-partner"),
+	qwen: new QwenExecutor(),
+	opencode: new OpenCodeExecutor(),
+	"opencode-go": new OpenCodeGoExecutor(),
+	"grok-web": new GrokWebExecutor(),
+	"perplexity-web": new PerplexityWebExecutor(),
+	"ollama-local": new OllamaLocalExecutor(),
+	commandcode: new CommandCodeExecutor(),
+	"xiaomi-tokenplan": new XiaomiTokenplanExecutor(),
+	"mimo-free": new MimoFreeExecutor(),
+	mmf: new MimoFreeExecutor(), // Alias for mimo-free
+	"codebuddy-cn": new CodeBuddyExecutor(),
+	t3chat: new T3ChatExecutor(),
 };
 
 const defaultCache = new Map();
 
 export function getExecutor(provider) {
-  if (executors[provider]) return executors[provider];
-  if (!defaultCache.has(provider)) defaultCache.set(provider, new DefaultExecutor(provider));
-  return defaultCache.get(provider);
+	if (executors[provider]) return executors[provider];
+	if (!defaultCache.has(provider))
+		defaultCache.set(provider, new DefaultExecutor(provider));
+	return defaultCache.get(provider);
 }
 
 export function hasSpecializedExecutor(provider) {
-  return !!executors[provider];
+	return !!executors[provider];
 }
 
 export { BaseExecutor } from "./base.js";
