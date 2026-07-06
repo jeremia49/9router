@@ -99,6 +99,7 @@ export async function POST(request) {
 
     // Validation
     const isWebCookieProvider = !!WEB_COOKIE_PROVIDERS[provider];
+    const isT3ChatProvider = provider === "t3chat";
     // Dual-auth providers (e.g. codebuddy-cn, xai) live under category "oauth" but also
     // accept an API key via authModes — they aren't in APIKEY_PROVIDERS, so allow them here.
     const supportsApiKeyMode = !!AI_PROVIDERS[provider]?.authModes?.includes("apikey");
@@ -118,7 +119,7 @@ export async function POST(request) {
     // key to paste. Without this, following such a provider's own setup notice returns 400.
     const apiKeySubstitute = AI_PROVIDERS[provider]?.apiKeyOptionalWith;
     const hasApiKeySubstitute = !!(apiKeySubstitute && body.providerSpecificData?.[apiKeySubstitute]);
-    if (!apiKey && provider !== "ollama-local" && !hasApiKeySubstitute) {
+    if (!apiKey && provider !== "ollama-local" && !hasApiKeySubstitute && !isT3ChatProvider) {
       return NextResponse.json({ error: `${isWebCookieProvider ? "Cookie value" : "API Key"} is required` }, { status: 400 });
     }
     const connectionName = name || displayName || AI_PROVIDERS[provider]?.name;
@@ -127,6 +128,10 @@ export async function POST(request) {
     }
 
     let providerSpecificData = normalizeProviderSpecificData(provider, body, body.providerSpecificData);
+
+    if (isT3ChatProvider && (!providerSpecificData?.cookies || !providerSpecificData?.convexSessionId)) {
+      return NextResponse.json({ error: "T3Chat cookies and convexSessionId are required" }, { status: 400 });
+    }
 
     // Compatible LLM nodes support multiple API-key connections (key pool); runtime
     // rotates/fails over via getProviderCredentials. Embedding nodes stay single-connection.
