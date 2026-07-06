@@ -10,6 +10,17 @@ import {
 } from "./t3chatPayload.js";
 import { T3ChatTransport } from "./t3chatTransport.js";
 
+/**
+ * T3Chat Executor - MUST use wreq-js HTTP client exclusively
+ *
+ * IMPORTANT: This executor is hardcoded to use T3ChatTransport which loads wreq-js.
+ * T3Chat requires browser-like fingerprinting that only wreq-js provides.
+ * Do NOT modify this to use native fetch, axios, got, or any other HTTP client.
+ *
+ * The T3ChatTransport validates that wreq-js is loaded and will throw an error
+ * if it detects any fallback to other HTTP clients.
+ */
+
 const CHAT_URL = "https://t3.chat/api/chat";
 let transportFactory = null;
 
@@ -45,6 +56,7 @@ export class T3ChatExecutor extends BaseExecutor {
 	}
 
 	async execute({ model, body, stream, credentials, signal, log }) {
+		// VALIDATION: Ensure we're using wreq-js transport, not base executor's fetch
 		const threadId = randomUUID();
 		const responseMessageId = randomUUID();
 		const { cookies } = getT3ChatCredentials(credentials);
@@ -56,9 +68,19 @@ export class T3ChatExecutor extends BaseExecutor {
 			threadId,
 			responseMessageId,
 		});
+
+		// Create transport instance - this will validate wreq-js is loaded
 		const transport = transportFactory
 			? transportFactory()
 			: new T3ChatTransport();
+
+		// Validate transport is T3ChatTransport (not a different HTTP client)
+		if (!(transport instanceof T3ChatTransport)) {
+			throw new Error(
+				"T3Chat provider MUST use T3ChatTransport with wreq-js. " +
+					"Detected invalid transport instance.",
+			);
+		}
 
 		log?.debug?.("FETCH", `T3CHAT → ${CHAT_URL}`);
 

@@ -2194,3 +2194,29 @@ exports[`GOLDEN buildUrl (default executor providers) > zed → url (stream + no
   "stream": "https://cloud.zed.dev/completions",
 }
 `;
+
+exports[`GOLDEN buildHeaders (default executor providers) > t3chat → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > t3chat → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://t3.chat/api/chat",
+  "stream": "https://t3.chat/api/chat",
+}
+`;
