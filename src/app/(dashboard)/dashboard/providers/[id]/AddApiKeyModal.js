@@ -15,12 +15,17 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const isCookie = authType === "cookie";
   const isT3Chat = provider === "t3chat";
   const isXaiApiKey = provider === "xai" && !isCookie;
-  const credentialLabel = isT3Chat ? "Cookies" : isCookie ? "Cookie Value" : provider === "qoder" || provider === "qoder-cn" ? "Personal Access Token (PAT)" : "API Key";
-  const credentialPlaceholder = isT3Chat
-    ? "wos-session=...; other_cookie=..."
-    : isCookie
-      ? (provider === "grok-web" ? "sso=xxxxx... or just the raw value" : "eyJhbGciOi...")
-      : (isXaiApiKey ? "xai-..." : provider === "qoder" || provider === "qoder-cn" ? "pt-..." : "");
+  let credentialLabel = "API Key";
+  if (isT3Chat) credentialLabel = "Cookies";
+  else if (isCookie) credentialLabel = "Cookie Value";
+  else if (provider === "qoder" || provider === "qoder-cn") credentialLabel = "Personal Access Token (PAT)";
+
+  let credentialPlaceholder = "";
+  if (isT3Chat) credentialPlaceholder = "wos-session=...; other_cookie=...";
+  else if (provider === "grok-web" && isCookie) credentialPlaceholder = "sso=xxxxx... or just the raw value";
+  else if (isCookie) credentialPlaceholder = "eyJhbGciOi...";
+  else if (isXaiApiKey) credentialPlaceholder = "xai-...";
+  else if (provider === "qoder" || provider === "qoder-cn") credentialPlaceholder = "pt-...";
 
   const isAzure = provider === "azure";
   const isCloudflareAi = provider === "cloudflare-ai";
@@ -33,6 +38,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const apiKeyOptionalWith = AI_PROVIDERS?.[provider]?.apiKeyOptionalWith || null;
   const providerRegions = AI_PROVIDERS?.[provider]?.regions || null;
   const defaultRegion = AI_PROVIDERS?.[provider]?.defaultRegion || providerRegions?.[0]?.id || "";
+  const bulkSubmitLabel = isT3Chat ? "Add All Accounts" : "Add All Keys";
 
   const [formData, setFormData] = useState({
     name: "",
@@ -298,7 +304,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
             )}
             <div className="flex gap-2">
               <Button onClick={handleBulkSubmit} fullWidth disabled={saving || !bulkText.trim()}>
-                {saving ? "Adding..." : (isT3Chat ? "Add All Accounts" : "Add All Keys")}
+                {saving ? "Adding..." : bulkSubmitLabel}
               </Button>
               <Button onClick={onClose} variant="ghost" fullWidth>Cancel</Button>
             </div>
