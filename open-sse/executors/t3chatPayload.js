@@ -1,6 +1,50 @@
 import { randomUUID } from "node:crypto";
 import { ToolRegistry } from "./t3chatTools.js";
 
+/**
+ * Normalize message content to plain text string
+ * Handles string, array of content parts, or object content
+ */
+function normalizeContent(content) {
+	if (typeof content === "string") {
+		return content;
+	}
+	if (!content) {
+		return "";
+	}
+	// Handle array of content parts (multi-modal)
+	if (Array.isArray(content)) {
+		const textParts = [];
+		for (const part of content) {
+			if (!part || typeof part !== "object") continue;
+			if (part.type === "text" && typeof part.text === "string") {
+				textParts.push(part.text);
+			} else if (
+				part.type === "input_text" &&
+				typeof part.input_text === "string"
+			) {
+				textParts.push(part.input_text);
+			}
+		}
+		return textParts.join("\n");
+	}
+	// Handle object (might be old format or stringified)
+	if (typeof content === "object") {
+		// If it has a text property, use that
+		if (typeof content.text === "string") {
+			return content.text;
+		}
+		// Otherwise stringify (this is what causes [object Object])
+		console.warn(
+			"[T3CHAT-PAYLOAD-DEBUG] Content is object without text property, stringifying:",
+			content,
+		);
+		return JSON.stringify(content);
+	}
+	// Fallback to string conversion
+	return String(content);
+}
+
 export function getT3ChatCredentials(credentials = {}) {
 	const data = credentials.providerSpecificData || {};
 	const cookies = String(data.cookies || credentials.apiKey || "").trim();
@@ -59,7 +103,8 @@ export function toT3ChatMessages(messages = [], systemPrompt = null) {
 		}
 
 		const role = message.role;
-		const content = message.content;
+		const rawContent = message.content;
+		const content = normalizeContent(rawContent);
 		const toolCalls = message.tool_calls;
 
 		// Skip system messages - already handled by systemPrompt parameter
@@ -82,6 +127,16 @@ export function toT3ChatMessages(messages = [], systemPrompt = null) {
 
 			// Convert tool_calls back to text blocks for t3chat
 			let assistantContent = content || "";
+
+			// Debug: log if content looks weird
+			if (assistantContent && typeof assistantContent !== "string") {
+				console.error(
+					"[T3CHAT-PAYLOAD-DEBUG] Assistant content is not string:",
+					typeof assistantContent,
+					assistantContent,
+				);
+			}
+
 			if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
 				const blocks = [];
 				for (const tc of toolCalls) {
@@ -125,11 +180,13 @@ export function toT3ChatMessages(messages = [], systemPrompt = null) {
 		// Add context prefix for non-user roles to preserve intent
 		if (role === "tool") {
 			const toolName = message.name ?? message.tool_call_id ?? "tool";
-			textContent = `[Tool result: ${toolName}]\n${content || "[tool returned no output]"}`;
+			const toolContent = content || "[tool returned no output]";
+			textContent = `[Tool result: ${toolName}]\n${toolContent}`;
 		} else if (role === "function") {
-			textContent = `[Function result: ${content}]`;
+			const funcContent = content || "[no output]";
+			textContent = `[Function result: ${funcContent}]`;
 		}
-		// role === "user" uses content as-is
+		// role === "user" uses content as-is (already normalized)
 
 		accumulatedUserContent.push(textContent);
 	}
@@ -198,6 +255,23 @@ export function buildT3ChatPayload({
 			throw new Error(
 				"T3Chat message missing required fields (id, role, parts)",
 			);
+		}
+		// Debug: log each message part to check for [object Object]
+		for (let i = 0; i < msg.parts.length; i++) {
+			const part = msg.parts[i];
+			if (part.type === "text" && typeof part.text !== "string") {
+				console.error(
+					`[T3CHAT-PAYLOAD-DEBUG] Message ${msg.role} part[${i}] text is not string:`,
+					typeof part.text,
+					part.text,
+				);
+			}
+			if (part.type === "text" && part.text.includes("[object Object]")) {
+				console.error(
+					`[T3CHAT-PAYLOAD-DEBUG] FOUND [object Object] in ${msg.role} message part[${i}]:`,
+					part.text.substring(0, 200),
+				);
+			}
 		}
 	}
 
