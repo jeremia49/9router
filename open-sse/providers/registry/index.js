@@ -103,9 +103,6 @@ import p97 from "./xiaomi-tokenplan.js";
 import p98 from "./youcom.js";
 import p99 from "./alims-intl.js";
 import p100 from "./codebuddy-intl.js";
-// Temporarily hidden — no tool calling support (trae SOLO agent / windsurf gRPC skip ToolCallChunk).
-// Re-enable by uncommenting both the import and the array entry below.
-// import p102 from "./trae.js";
 import p103 from "./zed.js";
 import p105 from "./api-airforce.js";
 import p106 from "./baidu.js";
@@ -116,8 +113,6 @@ import p110 from "./llm7.js";
 import p111 from "./sambanova.js";
 import p112 from "./tencent.js";
 import p113 from "./morph.js";
-// import p114 from "./devin-cli.js";
-// import p104 from "./windsurf.js";
 import p115 from "./poolside.js";
 import p116 from "./tokenrouter.js";
 import p117 from "./selfhosted-stt.js";
@@ -146,6 +141,8 @@ import p146 from "./chatgpt-web.js";
 import p147 from "./veoaifree-web.js";
 import p151 from "./uc-web.js";
 import p152 from "./runcrate.js";
+import p153 from "./t3chat.js";
+
 export default [
   p0,
   p1,
@@ -215,7 +212,6 @@ export default [
   p65,
   p66,
   p123,
-  p124,
   p67,
   p68,
   p68z,
@@ -226,6 +222,7 @@ export default [
   p73,
   p74,
   p75,
+  p124,
   p77,
   p78,
   p79,
@@ -251,7 +248,6 @@ export default [
   p98,
   p99,
   p100,
-  // p102, // trae — hidden, no tool calling
   p103,
   p105,
   p106,
@@ -262,8 +258,6 @@ export default [
   p111,
   p112,
   p113,
-  // p114, // devin-cli — hidden, spawns local agent with shell/fs access
-  // p104, // windsurf — hidden, no tool calling
   p115,
   p116,
   p117,
@@ -292,4 +286,5 @@ export default [
   p147,
   p151,
   p152,
+  p153,
 ];
