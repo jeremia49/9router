@@ -29,12 +29,14 @@ export async function getT3ChatUsage(providerSpecificData) {
 	const quotas = {};
 
 	// Balance quota (if available and reliable)
+	// Display as text ("50 / 100 credits"), not percentage
 	if (data.isBalanceReliable && typeof data.balance === "number") {
 		quotas.balance = {
 			used: data.lifetimeBalance - data.balance,
 			total: data.lifetimeBalance,
 			remaining: data.balance,
 			resetAt: null,
+			displayAsText: true, // Show as text, not percentage
 		};
 	}
 

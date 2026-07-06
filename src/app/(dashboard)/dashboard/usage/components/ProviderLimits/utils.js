@@ -447,7 +447,7 @@ export function parseQuotaData(provider, data) {
 				}
 				break;
 
-			case "codebuddy-cn":
+			case "codebuddy-cn": {
 				// CodeBuddy CN mixes recurring refill packs ("Monthly"/"Weekly"/...)
 				// with one-shot bonus packs ("Bonus Pack N"). Forward `recurring`
 				// so the UI can show "Expires in" for bonus packs (whose resetAt is
@@ -464,8 +464,9 @@ export function parseQuotaData(provider, data) {
 					});
 				}
 				break;
+			}
 
-			case "t3chat":
+			case "t3chat": {
 				if (data.message) {
 					normalizedQuotas.push({
 						name: "error",
@@ -476,30 +477,36 @@ export function parseQuotaData(provider, data) {
 					});
 				} else if (data.quotas) {
 					Object.entries(data.quotas).forEach(([name, quota]) => {
+						const displayName =
+							name === "fourHour"
+								? "4h Window"
+								: name === "monthly"
+									? "Monthly"
+									: name === "period"
+										? "Period"
+										: name === "balance"
+											? "Balance"
+											: name === "billing"
+												? "Billing Reset"
+												: name;
+
 						normalizedQuotas.push({
-							name:
-								name === "fourHour"
-									? "4h Window"
-									: name === "monthly"
-										? "Monthly"
-										: name === "period"
-											? "Period"
-											: name === "balance"
-												? "Balance"
-												: name === "billing"
-													? "Billing Reset"
-													: name,
+							name: displayName,
 							used: quota.used || 0,
 							total: quota.total || 0,
 							resetAt: quota.resetAt || null,
+							// Balance displays as text, others as percentage
+							displayAsText: quota.displayAsText === true,
+							// For percentage quotas, pass remainingPercentage if available
 							remainingPercentage:
-								quota.remaining !== undefined
+								quota.displayAsText !== true && quota.remaining !== undefined
 									? (quota.remaining / quota.total) * 100
 									: undefined,
 						});
 					});
 				}
 				break;
+			}
 
 			default:
 				// Generic fallback for unknown providers
