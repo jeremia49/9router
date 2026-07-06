@@ -6,16 +6,20 @@ import { Button, Badge, Input, Modal, Select } from "@/shared/components";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 
 const BULK_PLACEHOLDER = `name1|sk-key1\nname2|sk-key2\nsk-key-only-auto-named`;
+const T3CHAT_BULK_PLACEHOLDER = `wos-session=abc; other=def | convex-session-a\nwos-session=ghi; other=jkl | convex-session-b`;
 
 export default function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthropic, authType, authHint, website, proxyPools, error, onSave, onBulkDone, onClose }) {
   const NONE_PROXY_POOL_VALUE = "__none__";
   const isOllamaLocal = provider === "ollama-local";
   const isCookie = authType === "cookie";
+  const isT3Chat = provider === "t3chat";
   const isXaiApiKey = provider === "xai" && !isCookie;
-  const credentialLabel = isCookie ? "Cookie Value" : "API Key";
-  const credentialPlaceholder = isCookie
-    ? (provider === "grok-web" ? "sso=xxxxx... or just the raw value" : "eyJhbGciOi...")
-    : (isXaiApiKey ? "xai-..." : "");
+  const credentialLabel = isT3Chat ? "Cookies" : (isCookie ? "Cookie Value" : "API Key");
+  const credentialPlaceholder = isT3Chat
+    ? "wos-session=...; other_cookie=..."
+    : isCookie
+      ? (provider === "grok-web" ? "sso=xxxxx... or just the raw value" : "eyJhbGciOi...")
+      : (isXaiApiKey ? "xai-..." : "");
 
   const isAzure = provider === "azure";
   const isCloudflareAi = provider === "cloudflare-ai";
@@ -29,6 +33,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     priority: 1,
     proxyPoolId: NONE_PROXY_POOL_VALUE,
     ollamaHostUrl: "",
+    convexSessionId: "",
   });
   const [azureData, setAzureData] = useState({
     azureEndpoint: "",
@@ -46,6 +51,12 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const [bulkResult, setBulkResult] = useState(null); // { success, failed }
 
   const buildProviderSpecificData = () => {
+    if (isT3Chat) {
+      return {
+        cookies: formData.apiKey.trim(),
+        convexSessionId: formData.convexSessionId.trim(),
+      };
+    }
     if (isOllamaLocal && formData.ollamaHostUrl.trim()) {
       return { baseUrl: formData.ollamaHostUrl.trim() };
     }
@@ -86,6 +97,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const handleSubmit = async () => {
     if (!provider) return;
     if (!isOllamaLocal && !formData.apiKey) return;
+    if (isT3Chat && !formData.convexSessionId.trim()) return;
     if (!isOllamaLocal) {
       // Non-ollama providers require a name
       if (!formData.name) return;
@@ -94,22 +106,24 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
 
     setSaving(true);
     try {
-      let isValid = false;
-      try {
-        setValidating(true);
-        setValidationResult(null);
-        const res = await fetch("/api/providers/validate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, apiKey: formData.apiKey, providerSpecificData: buildProviderSpecificData() }),
-        });
-        const data = await res.json();
-        isValid = !!data.valid;
-        setValidationResult(isValid ? "success" : "failed");
-      } catch {
-        setValidationResult("failed");
-      } finally {
-        setValidating(false);
+      let isValid = isT3Chat;
+      if (!isT3Chat) {
+        try {
+          setValidating(true);
+          setValidationResult(null);
+          const res = await fetch("/api/providers/validate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider, apiKey: formData.apiKey, providerSpecificData: buildProviderSpecificData() }),
+          });
+          const data = await res.json();
+          isValid = !!data.valid;
+          setValidationResult(isValid ? "success" : "failed");
+        } catch {
+          setValidationResult("failed");
+        } finally {
+          setValidating(false);
+        }
       }
 
       await onSave({
@@ -131,6 +145,25 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     if (!lines.length) return;
     setSaving(true);
     setBulkResult(null);
+
+    if (isT3Chat) {
+      try {
+        const res = await fetch("/api/providers/t3chat/bulk", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: bulkText }),
+        });
+        const data = await res.json();
+        const result = { success: data.success || 0, failed: data.failed || 0, invalid: data.invalid || [] };
+        setBulkResult(result);
+        if (result.success > 0 && onBulkDone) onBulkDone();
+      } catch {
+        setBulkResult({ success: 0, failed: 1, invalid: [{ line: 0, reason: "Failed to bulk import T3Chat accounts" }] });
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     let success = 0;
     let failed = 0;
     for (let i = 0; i < lines.length; i++) {
@@ -168,10 +201,14 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
 
         {mode === "bulk" && (
           <div className="flex flex-col gap-3">
-            <p className="text-xs text-text-muted">One key per line. Format: <code>name|apiKey</code> or just <code>apiKey</code> (auto-named by index).</p>
+            <p className="text-xs text-text-muted">
+              {isT3Chat
+                ? <>One account per line. Format: <code>cookies | convex_session_id</code>.</>
+                : <>One key per line. Format: <code>name|apiKey</code> or just <code>apiKey</code> (auto-named by index).</>}
+            </p>
             <textarea
               className="w-full rounded border border-accent/30 bg-sidebar p-2 text-sm font-mono resize-y min-h-[140px] focus:outline-none focus:ring-1 focus:ring-primary"
-              placeholder={BULK_PLACEHOLDER}
+              placeholder={isT3Chat ? T3CHAT_BULK_PLACEHOLDER : BULK_PLACEHOLDER}
               value={bulkText}
               onChange={(e) => setBulkText(e.target.value)}
             />
@@ -180,9 +217,16 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
                 ✓ {bulkResult.success} added{bulkResult.failed > 0 ? `, ✗ ${bulkResult.failed} failed` : ""}
               </div>
             )}
+            {isT3Chat && bulkResult?.invalid?.length > 0 && (
+              <ul className="text-xs text-yellow-300 list-disc pl-5">
+                {bulkResult.invalid.map((item, index) => (
+                  <li key={`${item.line}-${index}`}>Line {item.line}: {item.reason}</li>
+                ))}
+              </ul>
+            )}
             <div className="flex gap-2">
               <Button onClick={handleBulkSubmit} fullWidth disabled={saving || !bulkText.trim()}>
-                {saving ? "Adding..." : "Add All Keys"}
+                {saving ? "Adding..." : (isT3Chat ? "Add All Accounts" : "Add All Keys")}
               </Button>
               <Button onClick={onClose} variant="ghost" fullWidth>Cancel</Button>
             </div>
@@ -222,12 +266,24 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
               placeholder={credentialPlaceholder}
               className="flex-1"
             />
-            <div className="pt-6">
-              <Button onClick={handleValidate} disabled={!formData.apiKey || validating || saving} variant="secondary">
-                {validating ? "Checking..." : "Check"}
-              </Button>
-            </div>
+            {!isT3Chat && (
+              <div className="pt-6">
+                <Button onClick={handleValidate} disabled={!formData.apiKey || validating || saving} variant="secondary">
+                  {validating ? "Checking..." : "Check"}
+                </Button>
+              </div>
+            )}
           </div>
+        )}
+        {isT3Chat && (
+          <Input
+            label="Convex Session ID"
+            type="text"
+            value={formData.convexSessionId}
+            onChange={(e) => setFormData({ ...formData, convexSessionId: e.target.value })}
+            placeholder="your_convex_session_id_here"
+            className="flex-1"
+          />
         )}
         {isXaiApiKey && (
           <p className="text-xs text-text-muted">
@@ -356,7 +412,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
         </p>
 
         <div className="flex gap-2">
-          <Button onClick={handleSubmit} fullWidth disabled={saving || (!isOllamaLocal && (!formData.name || !formData.apiKey)) || (isCompatible && !formData.defaultModel.trim()) || (isAzure && (!azureData.azureEndpoint || !azureData.deployment || !azureData.organization)) || (isCloudflareAi && !cloudflareData.accountId)}>
+          <Button onClick={handleSubmit} fullWidth disabled={saving || (!isOllamaLocal && (!formData.name || !formData.apiKey)) || (isT3Chat && !formData.convexSessionId.trim()) || (isCompatible && !formData.defaultModel.trim()) || (isAzure && (!azureData.azureEndpoint || !azureData.deployment || !azureData.organization)) || (isCloudflareAi && !cloudflareData.accountId)}>
             {saving ? "Saving..." : "Save"}
           </Button>
           <Button onClick={onClose} variant="ghost" fullWidth>
