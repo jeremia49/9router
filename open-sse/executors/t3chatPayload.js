@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ToolRegistry } from "./t3chatTools.js";
 
 export function getT3ChatCredentials(credentials = {}) {
 	const data = credentials.providerSpecificData || {};
@@ -14,7 +15,7 @@ export function getT3ChatCredentials(credentials = {}) {
 	return { cookies, convexSessionId };
 }
 
-export function toT3ChatMessages(messages = []) {
+export function toT3ChatMessages(messages = [], systemPrompt = null) {
 	if (!Array.isArray(messages)) {
 		console.error(
 			"[T3CHAT-PAYLOAD-DEBUG] messages is not an array:",
@@ -33,6 +34,11 @@ export function toT3ChatMessages(messages = []) {
 	// IMPORTANT: Consecutive user messages MUST be merged into a single message
 	const result = [];
 	let accumulatedUserContent = [];
+
+	// Add system prompt at the beginning if provided
+	if (systemPrompt) {
+		accumulatedUserContent.push(systemPrompt);
+	}
 
 	const flushUserMessage = () => {
 		if (accumulatedUserContent.length > 0) {
@@ -54,8 +60,14 @@ export function toT3ChatMessages(messages = []) {
 
 		const role = message.role;
 		const content = message.content;
+		const toolCalls = message.tool_calls;
 
-		// Skip messages with no content (except assistant which can be empty)
+		// Skip system messages - already handled by systemPrompt parameter
+		if (role === "system") {
+			continue;
+		}
+
+		// Skip messages with no content (except assistant which can be empty or have tool_calls)
 		if (!content && role !== "assistant") {
 			console.warn(
 				"[T3CHAT-PAYLOAD-DEBUG] Message with no content, role:",
@@ -67,23 +79,53 @@ export function toT3ChatMessages(messages = []) {
 		// Assistant messages: flush any accumulated user content first, then add assistant
 		if (role === "assistant") {
 			flushUserMessage();
+
+			// Convert tool_calls back to text blocks for t3chat
+			let assistantContent = content || "";
+			if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
+				const blocks = [];
+				for (const tc of toolCalls) {
+					const fnName = tc.function?.name ?? "";
+					const argsStr = tc.function?.arguments ?? "";
+					let argsDict = {};
+					try {
+						argsDict = argsStr ? JSON.parse(argsStr) : {};
+					} catch {}
+					const params = Object.entries(argsDict)
+						.map(([k, v]) =>
+							typeof v === "string" ? `${k}="${v}"` : `${k}=${v}`,
+						)
+						.join(" ");
+					blocks.push(
+						params
+							? `\`\`\`tool:${fnName} ${params}\n\`\`\``
+							: `\`\`\`tool:${fnName}\n\`\`\``,
+					);
+				}
+				if (blocks.length > 0) {
+					const joinedBlocks = blocks.join("\n");
+					assistantContent = assistantContent
+						? `${assistantContent}\n${joinedBlocks}`
+						: joinedBlocks;
+				}
+			}
+
 			result.push({
 				id: randomUUID(),
-				parts: [{ type: "text", text: content || "" }],
+				parts: [{ type: "text", text: assistantContent }],
 				role: "assistant",
 				attachments: [],
 			});
 			continue;
 		}
 
-		// ALL other roles (user, system, tool, function, etc.) -> accumulate as 'user' content
+		// ALL other roles (user, tool, function, etc.) -> accumulate as 'user' content
 		let textContent = content;
 
 		// Add context prefix for non-user roles to preserve intent
-		if (role === "system") {
-			textContent = content; // No prefix for system - just merge it
-		} else if (role === "tool") {
-			textContent = `[Tool result: ${content}]`;
+		if (role === "tool") {
+			const toolName = message.name ?? message.tool_call_id ?? "tool";
+			textContent = `[Tool result: ${toolName}]\n${content || "[tool returned no output]"}`;
 		} else if (role === "function") {
 			textContent = `[Function result: ${content}]`;
 		}
@@ -128,8 +170,24 @@ export function buildT3ChatPayload({
 	const { convexSessionId } = getT3ChatCredentials(credentials);
 	const reasoningEffort = body?.reasoning_effort || "medium";
 
+	// Build system prompt with tools if provided
+	let systemPrompt = null;
+	const tools = body?.tools;
+	if (tools && Array.isArray(tools) && tools.length > 0) {
+		const registry = new ToolRegistry(tools);
+		const toolPrompt = registry.toPrompt();
+		if (toolPrompt) {
+			systemPrompt = toolPrompt;
+			console.log(
+				"[T3CHAT-PAYLOAD-DEBUG] Injected tool prompt:",
+				toolPrompt.length,
+				"chars",
+			);
+		}
+	}
+
 	// Validate messages array
-	const messages = toT3ChatMessages(body?.messages);
+	const messages = toT3ChatMessages(body?.messages, systemPrompt);
 	if (!Array.isArray(messages) || messages.length === 0) {
 		throw new Error("T3Chat requires at least one message in the request");
 	}
