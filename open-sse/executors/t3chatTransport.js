@@ -2,15 +2,21 @@ async function loadWreqFetch() {
 	try {
 		console.log("[T3CHAT-WREQ-DEBUG] Attempting to load wreq-js module...");
 		console.log("[T3CHAT-WREQ-DEBUG] Node version:", process.version);
-		console.log("[T3CHAT-WREQ-DEBUG] Platform:", process.platform, process.arch);
-		
+		console.log(
+			"[T3CHAT-WREQ-DEBUG] Platform:",
+			process.platform,
+			process.arch,
+		);
+
 		const mod = await import("wreq-js");
 		console.log("[T3CHAT-WREQ-DEBUG] wreq-js module loaded");
 		console.log("[T3CHAT-WREQ-DEBUG] Module keys:", Object.keys(mod));
-		
+
 		const fetchFn = mod.fetch || mod.default?.fetch || mod;
 		if (!fetchFn || typeof fetchFn !== "function") {
-			console.error("[T3CHAT-WREQ-DEBUG] wreq-js did not export a valid fetch function");
+			console.error(
+				"[T3CHAT-WREQ-DEBUG] wreq-js did not export a valid fetch function",
+			);
 			console.error("[T3CHAT-WREQ-DEBUG] Exported:", typeof fetchFn);
 			throw new Error(
 				"T3Chat provider requires wreq-js but it failed to load properly. " +
@@ -77,44 +83,62 @@ export class T3ChatTransport {
 
 	async getFetch() {
 		if (this.fetchFn) return this.fetchFn;
-		
+
 		console.log("[T3CHAT-TRANSPORT-DEBUG] Loading wreq-js...");
 		this.fetchFn = await loadWreqFetch();
 		console.log("[T3CHAT-TRANSPORT-DEBUG] wreq-js loaded successfully");
-		
+
 		// Verify this is wreq-js, not native fetch or other HTTP client
 		if (this.fetchFn === globalThis.fetch || this.fetchFn === global.fetch) {
-			console.error("[T3CHAT-TRANSPORT-DEBUG] ERROR: Detected native fetch instead of wreq-js!");
+			console.error(
+				"[T3CHAT-TRANSPORT-DEBUG] ERROR: Detected native fetch instead of wreq-js!",
+			);
 			throw new Error(
 				"T3Chat provider detected non-wreq fetch. " +
 					"T3Chat MUST use wreq-js exclusively. Check wreq-js installation.",
 			);
 		}
-		
-		console.log("[T3CHAT-TRANSPORT-DEBUG] Validated: Using wreq-js (not native fetch)");
+
+		console.log(
+			"[T3CHAT-TRANSPORT-DEBUG] Validated: Using wreq-js (not native fetch)",
+		);
 		return this.fetchFn;
 	}
 
 	async post(url, { headers, json, signal, proxyOptions = null } = {}) {
 		const fetchFn = await this.getFetch();
-		
+
 		console.log("[T3CHAT-TRANSPORT-DEBUG] Making POST request to:", url);
-		console.log("[T3CHAT-TRANSPORT-DEBUG] Browser fingerprint: chrome_136 / windows");
+		console.log(
+			"[T3CHAT-TRANSPORT-DEBUG] Browser fingerprint: chrome_136 / windows",
+		);
 		console.log("[T3CHAT-TRANSPORT-DEBUG] Timeout:", this.timeoutMs, "ms");
-		
+
 		// Determine proxy from multiple sources (priority order):
 		// 1. proxyOptions from credentials (highest priority)
 		// 2. T3CHAT_PROXY environment variable
 		// 3. HTTPS_PROXY environment variable
 		let proxyUrl = null;
-		
-		if (proxyOptions?.connectionProxyEnabled && proxyOptions?.connectionProxyUrl) {
+
+		if (
+			proxyOptions?.connectionProxyEnabled &&
+			proxyOptions?.connectionProxyUrl
+		) {
 			proxyUrl = proxyOptions.connectionProxyUrl;
-			console.log("[T3CHAT-TRANSPORT-DEBUG] Using proxy from credentials:", proxyUrl.replace(/:\/\/.*@/, "://***@"));
+			console.log(
+				"[T3CHAT-TRANSPORT-DEBUG] Using proxy from credentials:",
+				proxyUrl.replace(/:\/\/.*@/, "://***@"),
+			);
 		} else {
-			proxyUrl = process.env.T3CHAT_PROXY || process.env.HTTPS_PROXY || process.env.https_proxy;
+			proxyUrl =
+				process.env.T3CHAT_PROXY ||
+				process.env.HTTPS_PROXY ||
+				process.env.https_proxy;
 			if (proxyUrl) {
-				console.log("[T3CHAT-TRANSPORT-DEBUG] Using proxy from environment:", proxyUrl.replace(/:\/\/.*@/, "://***@"));
+				console.log(
+					"[T3CHAT-TRANSPORT-DEBUG] Using proxy from environment:",
+					proxyUrl.replace(/:\/\/.*@/, "://***@"),
+				);
 			}
 		}
 
@@ -131,30 +155,55 @@ export class T3ChatTransport {
 				timeout: this.timeoutMs,
 				signal,
 			};
-			
+
 			// Add proxy if configured (helps bypass Vercel Security Checkpoint)
 			if (proxyUrl) {
 				options.proxy = proxyUrl;
 			}
-			
+
 			const response = await fetchFn(url, options);
-			
+
 			console.log("[T3CHAT-TRANSPORT-DEBUG] Response status:", response.status);
-			console.log("[T3CHAT-TRANSPORT-DEBUG] Response headers:", response.headers ? Object.fromEntries([...response.headers.entries()].slice(0, 5)) : "none");
+
+			// Log headers safely without consuming the body
+			if (response.headers) {
+				try {
+					const headerEntries = [...response.headers.entries()].slice(0, 5);
+					console.log(
+						"[T3CHAT-TRANSPORT-DEBUG] Response headers:",
+						Object.fromEntries(headerEntries),
+					);
+				} catch (e) {
+					console.log(
+						"[T3CHAT-TRANSPORT-DEBUG] Response headers: (unable to parse)",
+					);
+				}
+			}
 
 			// For error responses, read the body as text first
 			if (response.status >= 400) {
 				const text = await response.text();
-				console.error("[T3CHAT-TRANSPORT-DEBUG] Error response body:", text.substring(0, 300));
+				console.error(
+					"[T3CHAT-TRANSPORT-DEBUG] Error response body:",
+					text.substring(0, 300),
+				);
 				return {
 					status: response.status,
 					text,
 				};
 			}
 
-			// For streaming responses, return the response directly
-			if (response.body && typeof response.body.getReader === "function") {
-				console.log("[T3CHAT-TRANSPORT-DEBUG] Streaming response detected");
+			// Check content-type to determine if it's streaming SSE
+			const contentType = response.headers?.get?.("content-type") || "";
+			const isSSE = contentType.includes("text/event-stream");
+
+			// For streaming SSE responses, return the response directly WITHOUT consuming body
+			if (
+				isSSE &&
+				response.body &&
+				typeof response.body.getReader === "function"
+			) {
+				console.log("[T3CHAT-TRANSPORT-DEBUG] Streaming SSE response detected");
 				return {
 					status: response.status,
 					response: response,
@@ -164,7 +213,10 @@ export class T3ChatTransport {
 
 			// For non-streaming, read the text
 			const text = await response.text();
-			console.log("[T3CHAT-TRANSPORT-DEBUG] Non-streaming response length:", text.length);
+			console.log(
+				"[T3CHAT-TRANSPORT-DEBUG] Non-streaming response length:",
+				text.length,
+			);
 			return {
 				status: response.status,
 				text,
@@ -178,20 +230,32 @@ export class T3ChatTransport {
 
 	async get(url, { headers, signal, proxyOptions = null } = {}) {
 		const fetchFn = await this.getFetch();
-		
+
 		// Determine proxy from multiple sources
 		let proxyUrl = null;
-		
-		if (proxyOptions?.connectionProxyEnabled && proxyOptions?.connectionProxyUrl) {
+
+		if (
+			proxyOptions?.connectionProxyEnabled &&
+			proxyOptions?.connectionProxyUrl
+		) {
 			proxyUrl = proxyOptions.connectionProxyUrl;
-			console.log("[T3CHAT-TRANSPORT-DEBUG] GET using proxy from credentials:", proxyUrl.replace(/:\/\/.*@/, "://***@"));
+			console.log(
+				"[T3CHAT-TRANSPORT-DEBUG] GET using proxy from credentials:",
+				proxyUrl.replace(/:\/\/.*@/, "://***@"),
+			);
 		} else {
-			proxyUrl = process.env.T3CHAT_PROXY || process.env.HTTPS_PROXY || process.env.https_proxy;
+			proxyUrl =
+				process.env.T3CHAT_PROXY ||
+				process.env.HTTPS_PROXY ||
+				process.env.https_proxy;
 			if (proxyUrl) {
-				console.log("[T3CHAT-TRANSPORT-DEBUG] GET using proxy from environment:", proxyUrl.replace(/:\/\/.*@/, "://***@"));
+				console.log(
+					"[T3CHAT-TRANSPORT-DEBUG] GET using proxy from environment:",
+					proxyUrl.replace(/:\/\/.*@/, "://***@"),
+				);
 			}
 		}
-		
+
 		const options = {
 			method: "GET",
 			headers: headers || {},
@@ -200,7 +264,7 @@ export class T3ChatTransport {
 			timeout: this.timeoutMs,
 			signal,
 		};
-		
+
 		// Add proxy if configured (helps bypass Vercel Security Checkpoint)
 		if (proxyUrl) {
 			options.proxy = proxyUrl;
