@@ -30,7 +30,21 @@ export function toT3ChatMessages(messages = []) {
 
 	// T3Chat ONLY supports 'user' and 'assistant' roles
 	// All other roles (system, tool, function) MUST be converted to 'user'
+	// IMPORTANT: Consecutive user messages MUST be merged into a single message
 	const result = [];
+	let accumulatedUserContent = [];
+
+	const flushUserMessage = () => {
+		if (accumulatedUserContent.length > 0) {
+			result.push({
+				id: randomUUID(),
+				parts: [{ type: "text", text: accumulatedUserContent.join("\n\n") }],
+				role: "user",
+				attachments: [],
+			});
+			accumulatedUserContent = [];
+		}
+	};
 
 	for (const message of messages) {
 		if (!message || typeof message !== "object") {
@@ -50,8 +64,9 @@ export function toT3ChatMessages(messages = []) {
 			continue;
 		}
 
-		// Assistant messages: pass through as-is
+		// Assistant messages: flush any accumulated user content first, then add assistant
 		if (role === "assistant") {
+			flushUserMessage();
 			result.push({
 				id: randomUUID(),
 				parts: [{ type: "text", text: content || "" }],
@@ -61,26 +76,24 @@ export function toT3ChatMessages(messages = []) {
 			continue;
 		}
 
-		// ALL other roles (user, system, tool, function, etc.) -> convert to 'user'
+		// ALL other roles (user, system, tool, function, etc.) -> accumulate as 'user' content
 		let textContent = content;
 
 		// Add context prefix for non-user roles to preserve intent
 		if (role === "system") {
-			textContent = `[System instruction]: ${content}`;
+			textContent = content; // No prefix for system - just merge it
 		} else if (role === "tool") {
-			textContent = `[Tool result]: ${content}`;
+			textContent = `[Tool result: ${content}]`;
 		} else if (role === "function") {
-			textContent = `[Function result]: ${content}`;
+			textContent = `[Function result: ${content}]`;
 		}
 		// role === "user" uses content as-is
 
-		result.push({
-			id: randomUUID(),
-			parts: [{ type: "text", text: textContent }],
-			role: "user",
-			attachments: [],
-		});
+		accumulatedUserContent.push(textContent);
 	}
+
+	// Flush any remaining user content
+	flushUserMessage();
 
 	console.log(
 		"[T3CHAT-PAYLOAD-DEBUG] Transformed",
