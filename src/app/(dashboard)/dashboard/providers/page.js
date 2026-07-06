@@ -393,6 +393,16 @@ export default function ProvidersPage() {
     );
   }
 
+  const webCookieEntries = sortByPriority(
+    Object.entries(WEB_COOKIE_PROVIDERS).filter(
+      ([, info]) =>
+        !info.hidden &&
+        (info.serviceKinds ?? ["llm"]).includes("llm") &&
+        matchSearch(info.name),
+    ),
+    "cookie",
+  );
+
   const hasAnyResult =
     oauthEntries.length > 0 ||
     freeEntries.length > 0 ||
@@ -649,6 +659,7 @@ export default function ProvidersPage() {
         )}
       </div>
       )}
+
 
       <AddCompatibleModal
         variant="openai"
