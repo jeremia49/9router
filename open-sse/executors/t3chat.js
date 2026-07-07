@@ -324,14 +324,54 @@ export class T3ChatExecutor extends BaseExecutor {
 					transformedBody,
 				};
 			} else {
-				// Simple text-only response
+				// Simple text-only response, but check for tool calls in text
 				const text = parseT3ChatTextResponse(sseText);
-				return {
-					response: createTextResponse(text, 200, model),
-					url: CHAT_URL,
-					headers,
-					transformedBody,
-				};
+				
+				// Post-process to check if text contains tool calls
+				const { postProcessToolCalls } = await import("./t3chatTools.js");
+				const processed = postProcessToolCalls(text);
+				
+				if (processed.tool_calls && processed.tool_calls.length > 0) {
+					// Found tool calls in text, return as tool_calls response
+					const assistantMessage = {
+						role: "assistant",
+						content: processed.content || "",
+						tool_calls: processed.tool_calls,
+					};
+					
+					return {
+						response: new Response(
+							JSON.stringify({
+								id: `chatcmpl-${randomUUID()}`,
+								object: "chat.completion",
+								created: Math.floor(Date.now() / 1000),
+								model,
+								choices: [
+									{
+										index: 0,
+										message: assistantMessage,
+										finish_reason: "tool_calls",
+									},
+								],
+							}),
+							{
+								status: 200,
+								headers: { "Content-Type": "application/json" },
+							},
+						),
+						url: CHAT_URL,
+						headers,
+						transformedBody,
+					};
+				} else {
+					// No tool calls found, return as normal text response
+					return {
+						response: createTextResponse(text, 200, model),
+						url: CHAT_URL,
+						headers,
+						transformedBody,
+					};
+				}
 			}
 		}
 
