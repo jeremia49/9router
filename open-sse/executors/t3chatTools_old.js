@@ -49,78 +49,90 @@ export class ToolRegistry {
 
 		const lines = [
 			"You are running inside a host application that will execute OpenAI function tools for you.",
-			"The host requires you to emit tool calls as fenced code blocks with this format:",
+			"The host has provided REAL tools in this request. You do not execute actions directly in prose; you request them by emitting `tool:` fenced blocks.",
+			"",
+			"TOOL CALL PROTOCOL:",
+			"Emit one or more fenced blocks and then stop so the host can run them:",
 			"",
 			"```tool:<exact_tool_name>",
-			'{"parameter": "value"}',
+			'{"argument_name":"argument value"}',
 			"```",
 			"",
-			"Rules:",
-			"1. Use the EXACT tool name from the list below (case-sensitive)",
-			"2. Include valid JSON arguments on the line after the tool name",
-			"3. Close the block with ``` on its own line",
-			"4. When you emit a tool block, STOP your response there - do not continue writing",
-			"5. The host will execute the tool and return results in the next message",
+			"You may also put simple scalar arguments on the opening line as key=value, but JSON in the block body is preferred for accuracy.",
+			"Use only the exact tool names listed below. The proxy converts each block to OpenAI `tool_calls` for the client.",
 			"",
-			"Available tools:",
-			"",
+			"AVAILABLE TOOLS:",
 		];
 
 		for (const spec of this.specs.values()) {
-			lines.push(`## ${spec.name}`);
-			if (spec.description) lines.push(spec.description);
-
 			const properties = this.getProperties(spec);
 			const required = this.getRequired(spec);
-
-			if (Object.keys(properties).length > 0) {
-				lines.push("");
-				lines.push("Parameters:");
-				for (const [key, schema] of Object.entries(properties)) {
-					const reqMark = required.has(key) ? " (required)" : "";
-					const desc = schema?.description || "";
-					lines.push(`- ${key}${reqMark}: ${desc}`);
-				}
+			const requiredNames = Object.keys(properties).filter((name) =>
+				required.has(name),
+			);
+			const optionalNames = Object.keys(properties).filter(
+				(name) => !required.has(name),
+			);
+			const desc = this.shorten(spec.description, 160);
+			const details = [];
+			if (desc) details.push(desc);
+			if (requiredNames.length > 0)
+				details.push("required: " + requiredNames.join(", "));
+			if (optionalNames.length > 0) {
+				details.push("optional: " + optionalNames.slice(0, 16).join(", "));
+				if (optionalNames.length > 16)
+					details.push(`+${optionalNames.length - 16} more optional args`);
 			}
-			lines.push("");
+			lines.push(
+				`- ${spec.name}` +
+					(details.length > 0 ? `: ${details.join("; ")}` : ""),
+			);
 		}
+
+		lines.push(
+			"",
+			"RULES:",
+			"1. If the user asks for information that requires any listed tool, call the relevant tool instead of explaining that you cannot.",
+			"2. Do not ask the user to run commands, open files, paste file contents, or perform work that a listed tool can do.",
+			"3. When you need tool results before answering, emit only tool blocks and no prose.",
+			"4. After tool results arrive, continue from those results. Call more tools if needed; otherwise give the final answer.",
+			"5. If a tool can access files, terminals, browsers, web search, calendars, or other external systems, treat that access as available through the host tool.",
+		);
 
 		return lines.join("\n");
 	}
 
-	getProperties(spec) {
-		if (!spec || typeof spec !== "object") return {};
-		const params = spec.parameters;
-		if (!params || typeof params !== "object") return {};
-		return params.properties ?? {};
+	getRequired(spec) {
+		const rawRequired = spec.parameters?.required;
+		if (!Array.isArray(rawRequired)) return new Set();
+		return new Set(rawRequired.map((item) => String(item)));
 	}
 
-	getRequired(spec) {
-		if (!spec || typeof spec !== "object") return new Set();
-		const params = spec.parameters;
-		if (!params || typeof params !== "object") return new Set();
-		const req = params.required;
-		return new Set(Array.isArray(req) ? req : []);
+	getProperties(spec) {
+		const rawProperties = spec.parameters?.properties;
+		return rawProperties && typeof rawProperties === "object"
+			? rawProperties
+			: {};
+	}
+
+	shorten(value, limit) {
+		const text = String(value ?? "")
+			.split(/\s+/)
+			.join(" ");
+		if (text.length <= limit) return text;
+		return text.slice(0, Math.max(0, limit - 3)).trimEnd() + "...";
 	}
 
 	coerce(rawTool) {
-		if (!rawTool || typeof rawTool !== "object") return null;
-		if (rawTool.type === "function" && rawTool.function) {
-			const fn = rawTool.function;
-			return {
-				name: String(fn.name ?? ""),
-				description: String(fn.description ?? ""),
-				parameters: fn.parameters ?? {},
-			};
-		}
-		if (rawTool.name) {
-			return {
-				name: String(rawTool.name),
-				description: String(rawTool.description ?? ""),
-				parameters: rawTool.parameters ?? {},
-			};
-		}
-		return null;
+		const func = rawTool.function ?? rawTool;
+		const name = String(func?.name ?? "").trim();
+		if (!name) return null;
+		const params = func?.parameters ?? {};
+		return {
+			name,
+			description: String(func?.description ?? ""),
+			parameters: params && typeof params === "object" ? params : {},
+		};
 	}
 }
 
@@ -129,54 +141,43 @@ export class ToolCallTranslator {
 		this.registry = registry;
 	}
 
-	assistantMessageToT3Chat(message) {
-		if (!message || typeof message !== "object") return null;
-		if (message.role !== "assistant") return null;
+	fromTextBlocks(text) {
+		const calls = parseToolCalls(text);
+		return calls.map((call) => this.toOpenAIToolCall(call));
+	}
 
-		const parts = [];
-
-		if (message.content) {
-			parts.push({ type: "text", text: String(message.content) });
-		}
-
-		const toolCalls = message.tool_calls;
-		if (Array.isArray(toolCalls) && toolCalls.length > 0) {
-			for (const tc of toolCalls) {
-				if (!tc || typeof tc !== "object") continue;
-				const fn = tc.function;
-				if (!fn || typeof fn !== "object") continue;
-
-				const name = String(fn.name ?? "");
-				const args = String(fn.arguments ?? "{}");
-
-				const toolBlock = `\`\`\`tool:${name}\n${args}\n\`\`\``;
-				parts.push({ type: "text", text: toolBlock });
-			}
-		}
-
-		if (parts.length === 0) return null;
-
+	toOpenAIToolCall(call) {
+		const name = this.registry.resolveName(call.name);
+		const spec = this.registry.get(name);
+		const arguments_ = this.argumentsFor(call, spec);
 		return {
-			id: randomUUID(),
-			role: "assistant",
-			parts,
+			id: `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+			name,
+			arguments: JSON.stringify(arguments_),
 		};
 	}
 
-	toolMessageToT3Chat(message) {
-		if (!message || typeof message !== "object") return null;
-		if (message.role !== "tool") return null;
+	argumentsFor(call, spec) {
+		const args = { ...call.params };
+		const body = call.body.trim();
+		if (!body) return args;
 
-		const name = String(message.name ?? message.tool_call_id ?? "unknown");
-		const content = String(message.content ?? "");
+		const parsedBody = this.jsonLoadsObject(body);
+		if (parsedBody) {
+			Object.assign(args, parsedBody);
+			return args;
+		}
 
-		const text = `[Tool result: ${name}]\n${content}`;
+		if (spec) {
+			const target = this.singleBodyProperty(spec);
+			if (target && !(target in args)) {
+				args[target] = body;
+				return args;
+			}
+		}
 
-		return {
-			id: randomUUID(),
-			role: "user",
-			parts: [{ type: "text", text }],
-		};
+		if (!("body" in args)) args.body = body;
+		return args;
 	}
 
 	singleBodyProperty(spec) {
@@ -257,7 +258,8 @@ export function parseToolCalls(text) {
 
 /**
  * Post-process response text to extract tool calls in OpenAI format
- * IMPROVED: Strict validation, reject invalid calls, better error messages
+ * Handles both ```tool:name {args}``` and key=value formats
+ * Returns object with either tool_calls array or content string
  */
 export function postProcessToolCalls(text, registry = null) {
 	if (!text || typeof text !== "string") {
@@ -272,59 +274,27 @@ export function postProcessToolCalls(text, registry = null) {
 
 	// Convert to OpenAI tool_calls format
 	const toolCalls = [];
-	const invalidCalls = [];
-	
 	for (const call of parsedCalls) {
-		let argumentsJson = null;
+		let argumentsJson = "{}";
 		
 		// Try to parse body as JSON first
 		if (call.body && call.body.trim().startsWith("{")) {
 			try {
-				// Validate JSON strictly
-				const parsed = JSON.parse(call.body.trim());
-				
-				// Reject empty objects
-				if (Object.keys(parsed).length === 0) {
-					console.warn(`[T3CHAT-TOOLS] Rejected tool call '${call.name}' with empty arguments {}`);
-					invalidCalls.push({ name: call.name, reason: "empty_arguments" });
-					continue;
-				}
-				
-				// Validate that parsed object doesn't look like HTML attributes
-				const keys = Object.keys(parsed);
-				const htmlAttrPattern = /^(class|id|style|charset|content|name|type|rel|href|src)$/i;
-				const suspiciousKeys = keys.filter(k => htmlAttrPattern.test(k));
-				
-				if (suspiciousKeys.length > 3) {
-					console.warn(`[T3CHAT-TOOLS] Rejected tool call '${call.name}' - looks like misparsed HTML attributes:`, keys);
-					invalidCalls.push({ name: call.name, reason: "html_attributes_detected", keys });
-					continue;
-				}
-				
+				// Validate JSON
+				JSON.parse(call.body.trim());
 				argumentsJson = call.body.trim();
-			} catch (err) {
-				console.warn(`[T3CHAT-TOOLS] JSON parse failed for tool '${call.name}':`, err.message);
-				console.warn(`[T3CHAT-TOOLS] Body preview:`, call.body.substring(0, 200));
-				
+			} catch {
 				// If body is not valid JSON, try params
 				if (call.params && Object.keys(call.params).length > 0) {
 					argumentsJson = JSON.stringify(call.params);
-				} else {
-					invalidCalls.push({ name: call.name, reason: "invalid_json", error: err.message });
-					continue;
 				}
 			}
 		} else if (call.params && Object.keys(call.params).length > 0) {
 			// Use params if body is not JSON
 			argumentsJson = JSON.stringify(call.params);
-		} else if (call.body && call.body.trim().length > 0) {
+		} else if (call.body) {
 			// Wrap plain text body in a generic parameter
 			argumentsJson = JSON.stringify({ input: call.body.trim() });
-		} else {
-			// No valid arguments
-			console.warn(`[T3CHAT-TOOLS] Rejected tool call '${call.name}' - no valid arguments`);
-			invalidCalls.push({ name: call.name, reason: "no_arguments" });
-			continue;
 		}
 
 		// Resolve tool name if registry is provided
@@ -344,16 +314,6 @@ export function postProcessToolCalls(text, registry = null) {
 				arguments: argumentsJson,
 			},
 		});
-	}
-	
-	// Log summary
-	if (invalidCalls.length > 0) {
-		console.warn(`[T3CHAT-TOOLS] Rejected ${invalidCalls.length} invalid tool call(s):`, invalidCalls);
-	}
-	
-	if (toolCalls.length === 0) {
-		console.warn(`[T3CHAT-TOOLS] No valid tool calls found after parsing`);
-		return { content: text };
 	}
 
 	// Strip tool blocks from text to get remaining content
@@ -439,26 +399,51 @@ export class ToolCallDeltaAccumulator {
 		this.byIndex = new Map();
 	}
 
-	addDelta(delta) {
-		if (!delta || !Array.isArray(delta.tool_calls)) return;
-		for (const tc of delta.tool_calls) {
-			if (typeof tc.index !== "number") continue;
-			const idx = tc.index;
-			if (!this.byIndex.has(idx)) {
-				this.byIndex.set(idx, { id: "", name: "", arguments: "" });
+	add(rawCalls) {
+		for (let position = 0; position < rawCalls.length; position++) {
+			const rawCall = rawCalls[position];
+			if (!rawCall || typeof rawCall !== "object") continue;
+			const index = Number(rawCall.index ?? position) || 0;
+			const current = this.byIndex.get(index) ?? { arguments: "" };
+			this.byIndex.set(index, current);
+
+			const callId = rawCall.id;
+			if (callId) current.id = callId;
+			const callType = rawCall.type;
+			if (callType) current.type = callType;
+
+			const fn = rawCall.function;
+			if (fn && typeof fn === "object") {
+				const name = fn.name;
+				if (name) current.name = name;
+				if ("arguments" in fn) {
+					current.arguments =
+						String(current.arguments ?? "") + String(fn.arguments ?? "");
+				}
+				continue;
 			}
-			const acc = this.byIndex.get(idx);
-			if (tc.id) acc.id = tc.id;
-			if (tc.function?.name) acc.name += tc.function.name;
-			if (tc.function?.arguments) acc.arguments += tc.function.arguments;
+
+			if (rawCall.name) current.name = rawCall.name;
+			if ("arguments" in rawCall) {
+				current.arguments =
+					String(current.arguments ?? "") + String(rawCall.arguments ?? "");
+			}
 		}
 	}
 
-	getSnapshot() {
-		return [...this.byIndex.values()];
-	}
-
-	reset() {
-		this.byIndex.clear();
+	snapshot() {
+		const out = [];
+		const indices = [...this.byIndex.keys()].sort((a, b) => a - b);
+		for (const index of indices) {
+			const item = this.byIndex.get(index);
+			const name = String(item.name ?? "");
+			if (!name) continue;
+			out.push({
+				id: item.id ?? `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+				name,
+				arguments: String(item.arguments ?? "{}") || "{}",
+			});
+		}
+		return out;
 	}
 }
