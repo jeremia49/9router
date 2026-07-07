@@ -225,7 +225,11 @@ export function buildT3ChatPayload({
 	responseMessageId,
 }) {
 	const { convexSessionId } = getT3ChatCredentials(credentials);
-	const reasoningEffort = body?.reasoning_effort || "medium";
+	// Respect user's reasoning_effort setting, including "off"
+	// Default to "low" for better performance
+	const reasoningEffort = body?.reasoning_effort !== undefined 
+		? body.reasoning_effort 
+		: "low";
 
 	// Build system prompt with tools if provided
 	let systemPrompt = null;
