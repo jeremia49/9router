@@ -256,8 +256,92 @@ export function parseToolCalls(text) {
 	return out;
 }
 
+/**
+ * Post-process response text to extract tool calls in OpenAI format
+ * Handles both ```tool:name {args}``` and key=value formats
+ * Returns object with either tool_calls array or content string
+ */
+export function postProcessToolCalls(text, registry = null) {
+	if (!text || typeof text !== "string") {
+		return { content: text || "" };
+	}
+
+	// Parse tool calls from text
+	const parsedCalls = parseToolCalls(text);
+	if (parsedCalls.length === 0) {
+		return { content: text };
+	}
+
+	// Convert to OpenAI tool_calls format
+	const toolCalls = [];
+	for (const call of parsedCalls) {
+		let argumentsJson = "{}";
+		
+		// Try to parse body as JSON first
+		if (call.body && call.body.trim().startsWith("{")) {
+			try {
+				// Validate JSON
+				JSON.parse(call.body.trim());
+				argumentsJson = call.body.trim();
+			} catch {
+				// If body is not valid JSON, try params
+				if (call.params && Object.keys(call.params).length > 0) {
+					argumentsJson = JSON.stringify(call.params);
+				}
+			}
+		} else if (call.params && Object.keys(call.params).length > 0) {
+			// Use params if body is not JSON
+			argumentsJson = JSON.stringify(call.params);
+		} else if (call.body) {
+			// Wrap plain text body in a generic parameter
+			argumentsJson = JSON.stringify({ input: call.body.trim() });
+		}
+
+		// Resolve tool name if registry is provided
+		let toolName = call.name;
+		if (registry && typeof registry.resolveName === "function") {
+			toolName = registry.resolveName(call.name);
+		}
+
+		// Generate unique call ID (similar to Python's hash approach)
+		const callId = `call_${hashString(argumentsJson) % 100000000}`;
+
+		toolCalls.push({
+			id: callId,
+			type: "function",
+			function: {
+				name: toolName,
+				arguments: argumentsJson,
+			},
+		});
+	}
+
+	// Strip tool blocks from text to get remaining content
+	const remainingText = stripToolBlocks(text);
+
+	return {
+		tool_calls: toolCalls,
+		content: remainingText || "",
+	};
+}
+
+/**
+ * Simple string hash function for generating call IDs
+ */
+function hashString(str) {
+	let hash = 0;
+	for (let i = 0; i < str.length; i++) {
+		const char = str.charCodeAt(i);
+		hash = (hash << 5) - hash + char;
+		hash = hash & hash; // Convert to 32bit integer
+	}
+	return Math.abs(hash);
+}
+
 export function stripToolBlocks(text) {
 	if (!text) return "";
+	// Reset regex lastIndex before use
+	TOOL_CALL_RE.lastIndex = 0;
 	return text.replace(TOOL_CALL_RE, "").trim();
 }
 
