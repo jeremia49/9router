@@ -326,11 +326,11 @@ export class T3ChatExecutor extends BaseExecutor {
 			} else {
 				// Simple text-only response, but check for tool calls in text
 				const text = parseT3ChatTextResponse(sseText);
-				
+
 				// Post-process to check if text contains tool calls
 				const { postProcessToolCalls } = await import("./t3chatTools.js");
 				const processed = postProcessToolCalls(text);
-				
+
 				if (processed.tool_calls && processed.tool_calls.length > 0) {
 					// Found tool calls in text, return as tool_calls response
 					const assistantMessage = {
@@ -338,7 +338,7 @@ export class T3ChatExecutor extends BaseExecutor {
 						content: processed.content || "",
 						tool_calls: processed.tool_calls,
 					};
-					
+
 					return {
 						response: new Response(
 							JSON.stringify({
@@ -376,13 +376,14 @@ export class T3ChatExecutor extends BaseExecutor {
 		}
 
 		// For streaming, return the Response directly but convert T3Chat SSE to OpenAI format
-		// Accumulate text to detect tool calls at the end
-		let accumulatedText = "";
+		// Real-time tool detection: buffer text and check for tool blocks on-the-fly
+		let textBuffer = "";
 		let hasNativeToolCalls = false;
+		let toolBlockDetected = false;
 
 		const transformedStream = upstream.response.body.pipeThrough(
 			new TransformStream({
-				transform(chunk, controller) {
+				async transform(chunk, controller) {
 					const text = new TextDecoder().decode(chunk);
 					const lines = text.split("\n");
 
@@ -542,10 +543,111 @@ export class T3ChatExecutor extends BaseExecutor {
 									}
 								}
 
-								if (textContent) {
-									// Accumulate text for potential tool call detection
-									accumulatedText += textContent;
+							if (textContent) {
+								// Add to buffer for on-the-fly tool detection
+								textBuffer += textContent;
+								
+								// Check if we have a complete tool block
+								const toolBlockRegex = /```tool:(\w+)\s*([\s\S]*?)```/g;
+								const match = toolBlockRegex.exec(textBuffer);
+								
+								if (match && body?.tools?.length > 0) {
+									// Tool block detected! Stop sending text, start sending tool calls
+									toolBlockDetected = true;
 									
+									console.log("[T3CHAT-DEBUG] Tool block detected on-the-fly:", match[1]);
+									
+									// Parse all tool calls from buffer
+									const { postProcessToolCalls } = await import("./t3chatTools.js");
+									const processed = postProcessToolCalls(textBuffer);
+									
+									if (processed.tool_calls && processed.tool_calls.length > 0) {
+										console.log("[T3CHAT-DEBUG] Emitting", processed.tool_calls.length, "tool calls");
+										
+										// Send tool call chunks
+										for (const toolCall of processed.tool_calls) {
+											// Send tool call start
+											const startChunk = {
+												id: `chatcmpl-${responseMessageId}`,
+												object: "chat.completion.chunk",
+												created: Math.floor(Date.now() / 1000),
+												model,
+												choices: [{
+													index: 0,
+													delta: {
+														tool_calls: [{
+															index: 0,
+															id: toolCall.id,
+															type: "function",
+															function: {
+																name: toolCall.function.name,
+																arguments: "",
+															},
+														}],
+													},
+													finish_reason: null,
+												}],
+											};
+											controller.enqueue(
+												new TextEncoder().encode(
+													`data: ${JSON.stringify(startChunk)}\n\n`,
+												),
+											);
+											
+											// Send arguments
+											const argsChunk = {
+												id: `chatcmpl-${responseMessageId}`,
+												object: "chat.completion.chunk",
+												created: Math.floor(Date.now() / 1000),
+												model,
+												choices: [{
+													index: 0,
+													delta: {
+														tool_calls: [{
+															index: 0,
+															function: {
+																arguments: toolCall.function.arguments,
+															},
+														}],
+													},
+													finish_reason: null,
+												}],
+											};
+											controller.enqueue(
+												new TextEncoder().encode(
+													`data: ${JSON.stringify(argsChunk)}\n\n`,
+												),
+											);
+										}
+										
+										// Send finish with tool_calls reason
+										const finishChunk = {
+											id: `chatcmpl-${responseMessageId}`,
+											object: "chat.completion.chunk",
+											created: Math.floor(Date.now() / 1000),
+											model,
+											choices: [{
+												index: 0,
+												delta: {},
+												finish_reason: "tool_calls",
+											}],
+										};
+										controller.enqueue(
+											new TextEncoder().encode(
+												`data: ${JSON.stringify(finishChunk)}\n\n`,
+											),
+										);
+										
+										console.log("[T3CHAT-DEBUG] Tool calls sent, stopping text stream");
+										
+										// Clear buffer and set flag to stop further text streaming
+										textBuffer = "";
+										return; // Stop processing more text
+									}
+								}
+								
+								// No complete tool block yet, send text normally
+								if (!toolBlockDetected) {
 									// Convert to OpenAI streaming format
 									const openaiChunk = {
 										id: `chatcmpl-${responseMessageId}`,
@@ -567,28 +669,49 @@ export class T3ChatExecutor extends BaseExecutor {
 									);
 								}
 							}
-						} catch {
-							// Skip invalid JSON
 						}
+					} catch {
+						// Skip invalid JSON
 					}
-				},
+				}
+			},
 				async flush(controller) {
 					console.log("[T3CHAT-DEBUG] Stream flush called");
 					console.log("[T3CHAT-DEBUG] hasNativeToolCalls:", hasNativeToolCalls);
-					console.log("[T3CHAT-DEBUG] accumulatedText length:", accumulatedText.length);
-					console.log("[T3CHAT-DEBUG] accumulatedText preview:", accumulatedText.substring(0, 200));
+					console.log(
+						"[T3CHAT-DEBUG] accumulatedText length:",
+						accumulatedText.length,
+					);
+					console.log(
+						"[T3CHAT-DEBUG] accumulatedText preview:",
+						accumulatedText.substring(0, 200),
+					);
 					console.log("[T3CHAT-DEBUG] has tools:", body?.tools?.length > 0);
-					
+
 					// At the end of stream, check for tool calls in accumulated text
 					// Only if we didn't receive native tool call events
-					if (!hasNativeToolCalls && accumulatedText && body?.tools?.length > 0) {
-						console.log("[T3CHAT-DEBUG] Running post-processing for tool calls...");
+					if (
+						!hasNativeToolCalls &&
+						accumulatedText &&
+						body?.tools?.length > 0
+					) {
+						console.log(
+							"[T3CHAT-DEBUG] Running post-processing for tool calls...",
+						);
 						const { postProcessToolCalls } = await import("./t3chatTools.js");
 						const processed = postProcessToolCalls(accumulatedText);
-						
-						console.log("[T3CHAT-DEBUG] Post-process result:", JSON.stringify(processed, null, 2));
-						
+
+						console.log(
+							"[T3CHAT-DEBUG] Post-process result:",
+							JSON.stringify(processed, null, 2),
+						);
+
 						if (processed.tool_calls && processed.tool_calls.length > 0) {
+							console.log(
+								"[T3CHAT-DEBUG] Sending",
+								processed.tool_calls.length,
+								"tool call chunks...",
+							);
 							// Send tool call chunks
 							for (const toolCall of processed.tool_calls) {
 								// Send tool call start
@@ -597,72 +720,100 @@ export class T3ChatExecutor extends BaseExecutor {
 									object: "chat.completion.chunk",
 									created: Math.floor(Date.now() / 1000),
 									model,
-									choices: [{
-										index: 0,
-										delta: {
-											tool_calls: [{
-												index: 0,
-												id: toolCall.id,
-												type: "function",
-												function: {
-													name: toolCall.function.name,
-													arguments: "",
-												},
-											}],
+									choices: [
+										{
+											index: 0,
+											delta: {
+												tool_calls: [
+													{
+														index: 0,
+														id: toolCall.id,
+														type: "function",
+														function: {
+															name: toolCall.function.name,
+															arguments: "",
+														},
+													},
+												],
+											},
+											finish_reason: null,
 										},
-										finish_reason: null,
-									}],
+									],
 								};
 								controller.enqueue(
 									new TextEncoder().encode(
 										`data: ${JSON.stringify(startChunk)}\n\n`,
 									),
 								);
-								
+								console.log(
+									"[T3CHAT-DEBUG] Sent tool call start chunk for:",
+									toolCall.function.name,
+								);
+
 								// Send arguments
 								const argsChunk = {
 									id: `chatcmpl-${responseMessageId}`,
 									object: "chat.completion.chunk",
 									created: Math.floor(Date.now() / 1000),
 									model,
-									choices: [{
-										index: 0,
-										delta: {
-											tool_calls: [{
-												index: 0,
-												function: {
-													arguments: toolCall.function.arguments,
-												},
-											}],
+									choices: [
+										{
+											index: 0,
+											delta: {
+												tool_calls: [
+													{
+														index: 0,
+														function: {
+															arguments: toolCall.function.arguments,
+														},
+													},
+												],
+											},
+											finish_reason: null,
 										},
-										finish_reason: null,
-									}],
+									],
 								};
 								controller.enqueue(
 									new TextEncoder().encode(
 										`data: ${JSON.stringify(argsChunk)}\n\n`,
 									),
 								);
+								console.log("[T3CHAT-DEBUG] Sent arguments chunk");
 							}
-							
+
 							// Send finish with tool_calls reason
 							const finishChunk = {
 								id: `chatcmpl-${responseMessageId}`,
 								object: "chat.completion.chunk",
 								created: Math.floor(Date.now() / 1000),
 								model,
-								choices: [{
-									index: 0,
-									delta: {},
-									finish_reason: "tool_calls",
-								}],
+								choices: [
+									{
+										index: 0,
+										delta: {},
+										finish_reason: "tool_calls",
+									},
+								],
 							};
 							controller.enqueue(
 								new TextEncoder().encode(
 									`data: ${JSON.stringify(finishChunk)}\n\n`,
 								),
 							);
+							console.log(
+								"[T3CHAT-DEBUG] Sent finish chunk with tool_calls reason",
+							);
+						} else {
+							console.log(
+								"[T3CHAT-DEBUG] No tool calls found in post-processing",
+							);
 						}
+					} else {
+						console.log("[T3CHAT-DEBUG] Skipping post-processing:", {
+							hasNativeToolCalls,
+							hasAccumulatedText: !!accumulatedText,
+							hasTools: body?.tools?.length > 0,
+						});
 					}
 				},
 			}),
