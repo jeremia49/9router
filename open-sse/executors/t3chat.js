@@ -376,6 +376,9 @@ export class T3ChatExecutor extends BaseExecutor {
 		}
 
 		// For streaming, return the Response directly but convert T3Chat SSE to OpenAI format
+		// Accumulate text to detect tool calls at the end
+		let accumulatedText = "";
+		let hasNativeToolCalls = false;
 
 		const transformedStream = upstream.response.body.pipeThrough(
 			new TransformStream({
@@ -451,6 +454,7 @@ export class T3ChatExecutor extends BaseExecutor {
 
 							// Handle tool call start
 							if (value.type === "tool-input-start") {
+								hasNativeToolCalls = true;
 								const toolCallChunk = {
 									id: `chatcmpl-${responseMessageId}`,
 									object: "chat.completion.chunk",
@@ -486,6 +490,7 @@ export class T3ChatExecutor extends BaseExecutor {
 
 							// Handle tool call arguments
 							if (value.type === "tool-input-available") {
+								hasNativeToolCalls = true;
 								const argsChunk = {
 									id: `chatcmpl-${responseMessageId}`,
 									object: "chat.completion.chunk",
@@ -538,6 +543,9 @@ export class T3ChatExecutor extends BaseExecutor {
 								}
 
 								if (textContent) {
+									// Accumulate text for potential tool call detection
+									accumulatedText += textContent;
+									
 									// Convert to OpenAI streaming format
 									const openaiChunk = {
 										id: `chatcmpl-${responseMessageId}`,
@@ -561,6 +569,90 @@ export class T3ChatExecutor extends BaseExecutor {
 							}
 						} catch {
 							// Skip invalid JSON
+						}
+					}
+				},
+				async flush(controller) {
+					// At the end of stream, check for tool calls in accumulated text
+					// Only if we didn't receive native tool call events
+					if (!hasNativeToolCalls && accumulatedText && body?.tools?.length > 0) {
+						const { postProcessToolCalls } = await import("./t3chatTools.js");
+						const processed = postProcessToolCalls(accumulatedText);
+						
+						if (processed.tool_calls && processed.tool_calls.length > 0) {
+							// Send tool call chunks
+							for (const toolCall of processed.tool_calls) {
+								// Send tool call start
+								const startChunk = {
+									id: `chatcmpl-${responseMessageId}`,
+									object: "chat.completion.chunk",
+									created: Math.floor(Date.now() / 1000),
+									model,
+									choices: [{
+										index: 0,
+										delta: {
+											tool_calls: [{
+												index: 0,
+												id: toolCall.id,
+												type: "function",
+												function: {
+													name: toolCall.function.name,
+													arguments: "",
+												},
+											}],
+										},
+										finish_reason: null,
+									}],
+								};
+								controller.enqueue(
+									new TextEncoder().encode(
+										`data: ${JSON.stringify(startChunk)}\n\n`,
+									),
+								);
+								
+								// Send arguments
+								const argsChunk = {
+									id: `chatcmpl-${responseMessageId}`,
+									object: "chat.completion.chunk",
+									created: Math.floor(Date.now() / 1000),
+									model,
+									choices: [{
+										index: 0,
+										delta: {
+											tool_calls: [{
+												index: 0,
+												function: {
+													arguments: toolCall.function.arguments,
+												},
+											}],
+										},
+										finish_reason: null,
+									}],
+								};
+								controller.enqueue(
+									new TextEncoder().encode(
+										`data: ${JSON.stringify(argsChunk)}\n\n`,
+									),
+								);
+							}
+							
+							// Send finish with tool_calls reason
+							const finishChunk = {
+								id: `chatcmpl-${responseMessageId}`,
+								object: "chat.completion.chunk",
+								created: Math.floor(Date.now() / 1000),
+								model,
+								choices: [{
+									index: 0,
+									delta: {},
+									finish_reason: "tool_calls",
+								}],
+							};
+							controller.enqueue(
+								new TextEncoder().encode(
+									`data: ${JSON.stringify(finishChunk)}\n\n`,
+								),
+							);
 						}
 					}
 				},
