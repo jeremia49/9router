@@ -573,11 +573,20 @@ export class T3ChatExecutor extends BaseExecutor {
 					}
 				},
 				async flush(controller) {
+					console.log("[T3CHAT-DEBUG] Stream flush called");
+					console.log("[T3CHAT-DEBUG] hasNativeToolCalls:", hasNativeToolCalls);
+					console.log("[T3CHAT-DEBUG] accumulatedText length:", accumulatedText.length);
+					console.log("[T3CHAT-DEBUG] accumulatedText preview:", accumulatedText.substring(0, 200));
+					console.log("[T3CHAT-DEBUG] has tools:", body?.tools?.length > 0);
+					
 					// At the end of stream, check for tool calls in accumulated text
 					// Only if we didn't receive native tool call events
 					if (!hasNativeToolCalls && accumulatedText && body?.tools?.length > 0) {
+						console.log("[T3CHAT-DEBUG] Running post-processing for tool calls...");
 						const { postProcessToolCalls } = await import("./t3chatTools.js");
 						const processed = postProcessToolCalls(accumulatedText);
+						
+						console.log("[T3CHAT-DEBUG] Post-process result:", JSON.stringify(processed, null, 2));
 						
 						if (processed.tool_calls && processed.tool_calls.length > 0) {
 							// Send tool call chunks
