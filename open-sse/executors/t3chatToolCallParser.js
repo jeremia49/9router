@@ -114,61 +114,211 @@ function extractXmlParams(body) {
 }
 
 // ---------------------------------------------------------------------------
-// Dialect B: legacy ```tool:<name> key="v"\n<body>``` fenced blocks.
-// The header line may carry inline key="value" params; the body may be JSON,
-// key=value pairs, or plain text.
+// Shared: best-effort JSON parse + JSON-style string unescaping.
 // ---------------------------------------------------------------------------
-const TOOL_FENCE =
-	/```tool:([A-Za-z0-9_.:-]+)([^\n`]*)\r?\n([\s\S]*?)```/gi;
-const HEADER_PARAM =
-	/([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s]+))/g;
-
-function parseHeaderParams(headerStr) {
-	const result = {};
-	if (!headerStr) return result;
-	HEADER_PARAM.lastIndex = 0;
-	let m;
-	while ((m = HEADER_PARAM.exec(headerStr)) !== null) {
-		const key = m[1];
-		result[key] = coerceValue(m[2] ?? m[3] ?? m[4] ?? "");
+function tryParseJson(s) {
+	try {
+		return JSON.parse(s);
+	} catch {
+		return null;
 	}
-	return result;
 }
 
-function toolFenceArgs(headerStr, body) {
-	const trimmedBody = (body ?? "").trim();
-	// Prefer a JSON object/array body.
-	if (trimmedBody.startsWith("{") || trimmedBody.startsWith("[")) {
-		try {
-			const parsed = JSON.parse(trimmedBody);
-			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-				return parsed;
+// Decode the common JSON/C string escapes so attribute values that embed
+// \n / \t / \" round-trip into real characters. Unrecognized escapes and bare
+// (unescaped) characters are preserved verbatim, so partially/loosely escaped
+// model output degrades gracefully instead of being dropped.
+function unescapeString(s) {
+	if (typeof s !== "string" || s.indexOf("\\") === -1) return s;
+	return s.replace(
+		/\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[\s\S])/g,
+		(whole, esc) => {
+			const c = esc[0];
+			switch (c) {
+				case '"':
+					return '"';
+				case "'":
+					return "'";
+				case "\\":
+					return "\\";
+				case "/":
+					return "/";
+				case "b":
+					return "\b";
+				case "f":
+					return "\f";
+				case "n":
+					return "\n";
+				case "r":
+					return "\r";
+				case "t":
+					return "\t";
+				case "u":
+					return String.fromCharCode(parseInt(esc.slice(1), 16));
+				case "x":
+					return String.fromCharCode(parseInt(esc.slice(1), 16));
+				default:
+					return whole; // preserve unknown escape verbatim
 			}
-		} catch {
-			// fall through to header/params handling
+		},
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Dialect B: ```tool:<name> ...``` fenced blocks.
+//
+// Two body styles are supported and auto-detected:
+//   B1. JSON body:      ```tool:write\n{"path":"a","content":"..."}\n```
+//   B2. header attrs:   ```tool:write path="a" content="<!DOCTYPE html>\n..."```
+//
+// The header-attribute style (emitted by minimax / deepseek and others) puts a
+// possibly HUGE, multi-line `content="..."` value on the header line. Naive
+// line-oriented parsing truncated that value at the first newline / first inner
+// quote (the "<!DOCTYPE" bug), so the file body was lost. parseFenceAttributes
+// below reads such values across newlines and tolerates both escaped (\") and
+// unescaped inner quotes by making the final attribute greedy.
+// ---------------------------------------------------------------------------
+const TOOL_FENCE_OPEN = /```tool:([A-Za-z0-9_.:-]+)/gi;
+
+// Parse `key="value"` / `key=token` attributes out of a tool-fence region.
+// Robust to multi-line values and unescaped inner quotes.
+function parseFenceAttributes(region) {
+	const args = {};
+	const n = region.length;
+	let i = 0;
+	const keyRe = /^([A-Za-z_][\w-]*)\s*=\s*/;
+	while (i < n) {
+		while (i < n && /\s/.test(region[i])) i++;
+		if (i >= n) break;
+		const km = keyRe.exec(region.slice(i));
+		if (!km) break; // no more attributes
+		const key = km[1];
+		i += km[0].length;
+		if (region[i] === '"' || region[i] === "'") {
+			const quote = region[i];
+			i++; // consume opening quote
+			const start = i;
+			// Find the first UNescaped matching quote (the "proper" close).
+			let j = i;
+			let properEnd = -1;
+			while (j < n) {
+				if (region[j] === "\\") {
+					j += 2;
+					continue;
+				}
+				if (region[j] === quote) {
+					properEnd = j;
+					break;
+				}
+				j++;
+			}
+			let end;
+			if (properEnd === -1) {
+				end = n; // unterminated value: take the rest
+			} else {
+				const rest = region.slice(properEnd + 1);
+				// Accept the proper close only when what follows looks like the end
+				// of the attribute list or the next attribute. Otherwise the value
+				// has unescaped inner quotes (e.g. HTML lang="en") -> go greedy to
+				// the LAST quote in the region so the whole body is captured.
+				if (/^\s*$/.test(rest) || /^\s*[A-Za-z_][\w-]*\s*=/.test(rest)) {
+					end = properEnd;
+				} else {
+					const lastQuote = region.lastIndexOf(quote);
+					end = lastQuote > start ? lastQuote : n;
+				}
+			}
+			args[key] = unescapeString(region.slice(start, end));
+			i = end + 1;
+		} else {
+			const tok = /^(\S+)/.exec(region.slice(i));
+			if (!tok) break;
+			args[key] = coerceValue(tok[1]);
+			i += tok[1].length;
 		}
 	}
-	const headerParams = parseHeaderParams(headerStr);
-	if (Object.keys(headerParams).length > 0 && trimmedBody === "") {
-		return headerParams;
-	}
-	if (trimmedBody === "") return headerParams;
-	// Non-JSON body: merge header params + wrap remaining text.
-	return { ...headerParams, input: trimmedBody };
+	return args;
 }
 
-function extractToolFences(text) {
+function toolFenceArgs(region) {
+	const trimmed = (region ?? "").trim();
+	// B1: JSON object/array body.
+	if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+		const parsed = tryParseJson(trimmed);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			return parsed;
+		}
+	}
+	// B2: key="value" header attributes (possibly multi-line values).
+	if (/[A-Za-z_][\w-]*\s*=\s*["'\S]/.test(region)) {
+		const attrs = parseFenceAttributes(region.replace(/^\r?\n/, ""));
+		if (Object.keys(attrs).length > 0) return attrs;
+	}
+	if (trimmed === "") return {};
+	// Plain-text body: wrap under a generic `input` key.
+	return { input: trimmed };
+}
+
+// allowUnterminated: when true (batch / stream flush), a fence whose closing
+// ``` never arrived is still parsed from whatever body was received, so a
+// truncated tool call is recovered instead of leaking as raw text.
+function extractToolFences(text, { allowUnterminated = false } = {}) {
 	const results = [];
-	TOOL_FENCE.lastIndex = 0;
+	TOOL_FENCE_OPEN.lastIndex = 0;
 	let m;
 	let safety = 0;
-	while ((m = TOOL_FENCE.exec(text)) !== null) {
+	while ((m = TOOL_FENCE_OPEN.exec(text)) !== null) {
 		if (++safety > 100) break;
 		const name = m[1];
-		const args = toolFenceArgs(m[2], m[3]);
+		const regionStart = m.index + m[0].length;
+		const closeIdx = text.indexOf("```", regionStart);
+		let region;
+		let end;
+		if (closeIdx === -1) {
+			if (!allowUnterminated) continue; // wait for more data (streaming)
+			region = text.slice(regionStart);
+			end = text.length;
+		} else {
+			region = text.slice(regionStart, closeIdx);
+			end = closeIdx + 3;
+		}
+		results.push({ name, args: toolFenceArgs(region), start: m.index, end });
+		TOOL_FENCE_OPEN.lastIndex = end;
+	}
+	return results;
+}
+
+// ---------------------------------------------------------------------------
+// Dialect E: OpenAI "harmony" tokens emitted by gpt-oss models.
+//   <|start|>assistant<|channel|>commentary to=tool:write <|constrain|>json
+//   <|message|>{ ...json... }<|call|>
+// The tool target may be `tool:NAME`, `functions.NAME`, or bare `NAME`.
+// ---------------------------------------------------------------------------
+const HARMONY_CALL =
+	/(?:<\|start\|>[^<]*)?(?:<\|channel\|>[\s\S]*?)?to=(?:tool[:.]|functions?[:.])?([A-Za-z0-9_.:-]+)[\s\S]*?<\|message\|>([\s\S]*?)<\|call\|>/gi;
+
+function harmonyArgs(body) {
+	const trimmed = (body ?? "").trim();
+	if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+		const parsed = tryParseJson(trimmed);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			return parsed;
+		}
+	}
+	if (trimmed === "") return {};
+	return { input: trimmed };
+}
+
+function extractHarmonyCalls(text) {
+	const results = [];
+	HARMONY_CALL.lastIndex = 0;
+	let m;
+	let safety = 0;
+	while ((m = HARMONY_CALL.exec(text)) !== null) {
+		if (++safety > 100) break;
 		results.push({
-			name,
-			args,
+			name: m[1],
+			args: harmonyArgs(m[2]),
 			start: m.index,
 			end: m.index + m[0].length,
 		});
@@ -273,8 +423,9 @@ export function parseToolCalls(fullText) {
 	if (typeof fullText !== "string" || fullText.length === 0) return [];
 
 	const xml = extractXmlInvokes(fullText);
-	const fences = extractToolFences(fullText);
-	const consumed = [...xml, ...fences].map((x) => [x.start, x.end]);
+	const harmony = extractHarmonyCalls(fullText);
+	const fences = extractToolFences(fullText, { allowUnterminated: true });
+	const consumed = [...xml, ...harmony, ...fences].map((x) => [x.start, x.end]);
 
 	const jsonCandidates = extractJsonObjects(fullText).filter((o) => {
 		return !consumed.some(([s, e]) => o.start >= s && o.end <= e);
@@ -282,6 +433,8 @@ export function parseToolCalls(fullText) {
 
 	const items = [];
 	for (const x of xml) items.push({ pos: x.start, name: x.name, args: x.args });
+	for (const h of harmony)
+		items.push({ pos: h.start, name: h.name, args: h.args });
 	for (const f of fences)
 		items.push({ pos: f.start, name: f.name, args: f.args });
 	for (const o of jsonCandidates) {
@@ -327,9 +480,8 @@ export class StreamingToolCallParser {
 	_drain(isFinal) {
 		const events = [];
 
-		// eslint-disable-next-line no-constant-condition
 		while (true) {
-			const next = this._findEarliestComplete();
+			const next = this._findEarliestComplete(isFinal);
 			if (!next) break;
 
 			if (this.emitText && next.start > 0) {
@@ -363,17 +515,31 @@ export class StreamingToolCallParser {
 		return events;
 	}
 
-	// Earliest COMPLETE call (xml invoke, tool fence, or balanced json) in buffer.
-	_findEarliestComplete() {
+	// Earliest COMPLETE call (xml, harmony, tool fence, or balanced json) in
+	// buffer. When isFinal, an unterminated tool fence is also recovered so a
+	// truncated final call is not lost.
+	_findEarliestComplete(isFinal = false) {
 		let best = null;
 		const consider = (start, end, name, args) => {
 			if (!best || start < best.start) best = { start, end, name, args };
 		};
 
 		const xml = extractXmlInvokes(this.buffer);
-		if (xml.length > 0) consider(xml[0].start, xml[0].end, xml[0].name, xml[0].args);
+		if (xml.length > 0)
+			consider(xml[0].start, xml[0].end, xml[0].name, xml[0].args);
 
-		const fences = extractToolFences(this.buffer);
+		const harmony = extractHarmonyCalls(this.buffer);
+		if (harmony.length > 0)
+			consider(
+				harmony[0].start,
+				harmony[0].end,
+				harmony[0].name,
+				harmony[0].args,
+			);
+
+		const fences = extractToolFences(this.buffer, {
+			allowUnterminated: isFinal,
+		});
 		if (fences.length > 0)
 			consider(fences[0].start, fences[0].end, fences[0].name, fences[0].args);
 
@@ -393,7 +559,11 @@ export class StreamingToolCallParser {
 		for (let i = 0; i < buf.length; i++) {
 			const ch = buf[i];
 			if (ch === "{") return i; // any '{' could begin a JSON tool call
-			if (ch === "<" && this._couldStartXmlCall(buf.slice(i))) return i;
+			if (ch === "<") {
+				const frag = buf.slice(i);
+				if (this._couldStartXmlCall(frag) || this._couldStartHarmony(frag))
+					return i;
+			}
 			if (ch === "`" && this._couldStartToolFence(buf.slice(i))) return i;
 		}
 		return buf.length;
@@ -403,6 +573,19 @@ export class StreamingToolCallParser {
 		const openers = ["<invoke", "</invoke", "<parameter", "</parameter"];
 		for (const op of openers) {
 			if (op.startsWith(frag) || frag.startsWith(op)) return true;
+		}
+		return false;
+	}
+
+	// A `<|...` run that could be the start of a harmony tool call. Any harmony
+	// control token is held back until the closing <|call|> arrives.
+	_couldStartHarmony(frag) {
+		const opener = "<|";
+		if (opener.startsWith(frag) || frag.startsWith(opener)) {
+			// Once a full harmony call is present it is consumed by
+			// _findEarliestComplete; holding back a lone "<|..." prefix here keeps a
+			// partial call from leaking as text mid-stream.
+			return true;
 		}
 		return false;
 	}
@@ -430,9 +613,12 @@ export function streamToToolCalls(chunks) {
 export const __test__ = {
 	extractXmlInvokes,
 	extractToolFences,
+	extractHarmonyCalls,
 	extractJsonObjects,
 	jsonObjToToolCall,
 	toolFenceArgs,
+	parseFenceAttributes,
+	unescapeString,
 };
 
 export default { parseToolCalls, StreamingToolCallParser, streamToToolCalls };
