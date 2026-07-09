@@ -9,7 +9,8 @@ import {
 // Split a string into small fixed-size chunks to simulate streaming.
 function chunkify(str, size = 5) {
 	const chunks = [];
-	for (let i = 0; i < str.length; i += size) chunks.push(str.slice(i, i + size));
+	for (let i = 0; i < str.length; i += size)
+		chunks.push(str.slice(i, i + size));
 	return chunks;
 }
 
@@ -48,7 +49,8 @@ describe("t3chat universal tool-call parser (batch)", () => {
 	});
 
 	it("parses loose inline JSON {name, arguments}", () => {
-		const text = 'ok {"name":"get_weather","arguments":{"city":"Jakarta"}} done';
+		const text =
+			'ok {"name":"get_weather","arguments":{"city":"Jakarta"}} done';
 		expect(norm(parseToolCalls(text))).toEqual([
 			{ name: "get_weather", arguments: '{"city":"Jakarta"}' },
 		]);
@@ -74,6 +76,65 @@ describe("t3chat universal tool-call parser (batch)", () => {
 	it("returns [] for pure narration", () => {
 		expect(parseToolCalls("just talking, no tools here")).toEqual([]);
 	});
+
+	// ---- Header-attribute fences (minimax / deepseek): the big-file bug -------
+	it("parses a fence with inline attrs and a multi-line escaped-quote value", () => {
+		const html =
+			'<!DOCTYPE html>\n<html lang="en">\n<head><title>YT</title></head>\n<body>hi</body>\n</html>';
+		// The model emits content="..." with JSON-escaped quotes and newlines.
+		const escaped = html
+			.replace(/\\/g, "\\\\")
+			.replace(/"/g, '\\"')
+			.replace(/\n/g, "\\n");
+		const text = `\`\`\`tool:write path="youtube-clone.html" content="${escaped}"\n\`\`\``;
+		const calls = parseToolCalls(text);
+		expect(calls).toHaveLength(1);
+		expect(calls[0].function.name).toBe("write");
+		// The whole document must survive, not just "<!DOCTYPE".
+		expect(calls[0].function.arguments).toBe(
+			JSON.stringify({ path: "youtube-clone.html", content: html }),
+		);
+	});
+
+	it("captures the full value even when inner quotes are UNescaped", () => {
+		// e.g. content="<html lang="en">..." — inner quotes are bare.
+		const text =
+			'```tool:write path="a.html" content="<!DOCTYPE html>\n<html lang="en">\n<body>x</body>\n</html>"\n```';
+		const calls = parseToolCalls(text);
+		expect(calls).toHaveLength(1);
+		expect(calls[0].function.arguments).toContain('"path":"a.html"');
+		expect(calls[0].function.arguments).toContain("<!DOCTYPE html>");
+		expect(calls[0].function.arguments).toContain("</html>");
+	});
+
+	it("recovers an unterminated header-attr fence (truncated output)", () => {
+		// No closing ``` — the model was cut off mid-file.
+		const text =
+			'```tool:write path="a.html" content="<!DOCTYPE html>\n<html></html>"';
+		const calls = parseToolCalls(text);
+		expect(calls).toHaveLength(1);
+		expect(calls[0].function.arguments).toContain("</html>");
+	});
+
+	// ---- Harmony format (gpt-oss-20b / 120b) ---------------------------------
+	it("parses the OpenAI harmony to=tool:NAME format", () => {
+		const payload = {
+			path: "youtube-clone/index.html",
+			content: "<!DOCTYPE html>\n<html></html>",
+		};
+		const text = `<|start|>assistant<|channel|>commentary to=tool:write <|constrain|>json<|message|>${JSON.stringify(payload)}<|call|>`;
+		expect(norm(parseToolCalls(text))).toEqual([
+			{ name: "write", arguments: JSON.stringify(payload) },
+		]);
+	});
+
+	it("parses harmony to=functions.NAME variant", () => {
+		const text =
+			'<|channel|>commentary to=functions.get_weather<|message|>{"city":"Jakarta"}<|call|>';
+		expect(norm(parseToolCalls(text))).toEqual([
+			{ name: "get_weather", arguments: '{"city":"Jakarta"}' },
+		]);
+	});
 });
 
 describe("t3chat universal tool-call parser (streaming)", () => {
@@ -84,6 +145,8 @@ describe("t3chat universal tool-call parser (streaming)", () => {
 		"loose json": 'go {"name":"search","arguments":{"q":"x"}} end',
 		"multiline content":
 			'<invoke name="write"><parameter name="content">line1\nline2\n</parameter></invoke>',
+		harmony:
+			'<|start|>assistant<|channel|>commentary to=tool:bash <|constrain|>json<|message|>{"command":"pwd"}<|call|>',
 	};
 
 	for (const [label, text] of Object.entries(dialects)) {
@@ -122,9 +185,9 @@ describe("t3chat universal tool-call parser (streaming)", () => {
 		expect(joined).not.toContain("```");
 		expect(joined).not.toContain("tool:");
 		// And a tool call must have been emitted.
-		expect(events.some((e) => e.type === "tool_start" && e.name === "bash")).toBe(
-			true,
-		);
+		expect(
+			events.some((e) => e.type === "tool_start" && e.name === "bash"),
+		).toBe(true);
 	});
 
 	it("streams ordinary code fences as text (not tool calls)", () => {
