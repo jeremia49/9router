@@ -142,20 +142,21 @@ export function toT3ChatMessages(messages = [], systemPrompt = null) {
 				for (const tc of toolCalls) {
 					const fnName = tc.function?.name ?? "";
 					const argsStr = tc.function?.arguments ?? "";
-					let argsDict = {};
-					try {
-						argsDict = argsStr ? JSON.parse(argsStr) : {};
-					} catch {}
-					const params = Object.entries(argsDict)
-						.map(([k, v]) =>
-							typeof v === "string" ? `${k}="${v}"` : `${k}=${v}`,
-						)
-						.join(" ");
-					blocks.push(
-						params
-							? `\`\`\`tool:${fnName} ${params}\n\`\`\``
-							: `\`\`\`tool:${fnName}\n\`\`\``,
-					);
+					// Serialize the tool call in the same ```tool:<name>``` fenced form
+					// the injected prompt asks the model to emit, with the JSON
+					// arguments as the block body. This round-trips losslessly through
+					// the tool-call parser (including nested objects/arrays), unlike the
+					// old key="value" header form.
+					let bodyJson = "{}";
+					if (argsStr) {
+						try {
+							bodyJson = JSON.stringify(JSON.parse(argsStr));
+						} catch {
+							// Arguments weren't valid JSON; emit them verbatim.
+							bodyJson = argsStr;
+						}
+					}
+					blocks.push(`\`\`\`tool:${fnName}\n${bodyJson}\n\`\`\``);
 				}
 				if (blocks.length > 0) {
 					const joinedBlocks = blocks.join("\n");
