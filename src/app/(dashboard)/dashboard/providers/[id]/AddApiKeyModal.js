@@ -45,7 +45,7 @@ export default function AddApiKeyModal({
 	const defaultRegion =
 		AI_PROVIDERS?.[provider]?.defaultRegion || providerRegions?.[0]?.id || "";
 	const bulkSubmitLabel = isT3Chat ? "Add All Accounts" : "Add All Keys";
-
+	
 	const [formData, setFormData] = useState({
 		name: "",
 		apiKey: "",
@@ -53,7 +53,6 @@ export default function AddApiKeyModal({
 		priority: 1,
 		proxyPoolId: NONE_PROXY_POOL_VALUE,
 		ollamaHostUrl: "",
-		convexSessionId: "",
 	});
 	const [azureData, setAzureData] = useState({
 		azureEndpoint: "",
@@ -66,9 +65,14 @@ export default function AddApiKeyModal({
 	const [validating, setValidating] = useState(false);
 	const [validationResult, setValidationResult] = useState(null);
 	const [saving, setSaving] = useState(false);
+	const bulkPlaceholder = isCloudflareAi
+		? `name1|sk-key1|acc123456\nname2|sk-key2|def789012\nsk-key-only-auto-named`
+		: BULK_PLACEHOLDER;
+
 	const [mode, setMode] = useState("single"); // "single" | "bulk"
 	const [bulkText, setBulkText] = useState("");
 	const [bulkResult, setBulkResult] = useState(null); // { success, failed }
+
 
 	const buildProviderSpecificData = () => {
 		if (isT3Chat) {
@@ -170,76 +174,82 @@ export default function AddApiKeyModal({
 			setSaving(false);
 		}
 	};
+	
+  const handleBulkSubmit = async () => {
+    const lines = bulkText.split("\n").map(l => l.trim()).filter(Boolean);
+    if (!lines.length) return;
+    setSaving(true);
+    setBulkResult(null);
+    let success = 0;
+    let failed = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const parts = lines[i].split("|");
+      const baseName = parts.length >= 2 ? parts[0].trim() : "Key";
+      const name = `${baseName} ${i + 1}`;
 
-	const handleBulkSubmit = async () => {
-		const lines = bulkText
-			.split("\n")
-			.map((l) => l.trim())
-			.filter(Boolean);
-		if (!lines.length) return;
-		setSaving(true);
-		setBulkResult(null);
+      let apiKey;
+      let providerSpecificData;
+      if (isCloudflareAi && parts.length >= 3) {
+        // Format: name|apiKey|accountId
+        apiKey = parts.slice(1, -1).join("|").trim();
+        providerSpecificData = { accountId: parts[parts.length - 1].trim() };
+      } else {
+        apiKey = parts.length >= 2 ? parts.slice(1).join("|").trim() : parts[0].trim();
+      }
 
-		if (isT3Chat) {
-			try {
-				const res = await fetch("/api/providers/t3chat/bulk", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ text: bulkText }),
-				});
-				const data = await res.json();
-				const result = {
-					success: data.success || 0,
-					failed: data.failed || 0,
-					invalid: data.invalid || [],
-				};
-				setBulkResult(result);
-				if (result.success > 0 && onBulkDone) onBulkDone();
-			} catch {
-				setBulkResult({
-					success: 0,
-					failed: 1,
-					invalid: [
-						{ line: 0, reason: "Failed to bulk import T3Chat accounts" },
-					],
-				});
-			} finally {
-				setSaving(false);
-			}
-			return;
-		}
-		let success = 0;
-		let failed = 0;
-		for (let i = 0; i < lines.length; i++) {
-			const parts = lines[i].split("|");
-			const apiKey =
-				parts.length >= 2 ? parts.slice(1).join("|").trim() : parts[0].trim();
-			const baseName = parts.length >= 2 ? parts[0].trim() : "Key";
-			const name = `${baseName} ${i + 1}`;
-			try {
-				const res = await fetch("/api/providers", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						provider,
-						apiKey,
-						name,
-						priority: 1,
-						testStatus: "unknown",
-					}),
-				});
-				if (res.ok) success++;
-				else failed++;
-			} catch {
-				failed++;
-			}
-		}
-		setSaving(false);
-		setBulkResult({ success, failed });
-		if (success > 0 && onBulkDone) onBulkDone();
-	};
+      try {
+        const res = await fetch("/api/providers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            provider,
+            apiKey,
+            name,
+            priority: 1,
+            testStatus: "unknown",
+            ...(providerSpecificData ? { providerSpecificData } : {}),
+          }),
+        });
+        if (res.ok) success++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+    }
+    setSaving(false);
+    setBulkResult({ success, failed });
+    if (success > 0 && onBulkDone) onBulkDone();
+  };
+
 
 	if (!provider) return null;
+        {mode === "bulk" && (
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-text-muted">
+              {isCloudflareAi
+                ? <>One key per line. Format: <code>name|apiKey|accountId</code> or just <code>apiKey</code> (auto-named by index).</>
+                : <>One key per line. Format: <code>name|apiKey</code> or just <code>apiKey</code> (auto-named by index).</>
+              }
+            </p>
+            <textarea
+              className="w-full rounded border border-accent/30 bg-sidebar p-2 text-sm font-mono resize-y min-h-[140px] focus:outline-none focus:ring-1 focus:ring-primary"
+              placeholder={bulkPlaceholder}
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+            />
+            {bulkResult && (
+              <div className={`text-sm font-medium ${bulkResult.failed > 0 ? "text-yellow-400" : "text-green-400"}`}>
+                ✓ {bulkResult.success} added{bulkResult.failed > 0 ? `, ✗ ${bulkResult.failed} failed` : ""}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <Button onClick={handleBulkSubmit} fullWidth disabled={saving || !bulkText.trim()}>
+                {saving ? "Adding..." : "Add All Keys"}
+              </Button>
+              <Button onClick={onClose} variant="ghost" fullWidth>Cancel</Button>
+            </div>
+          </div>
+        )}
 
 	return (
 		<Modal
