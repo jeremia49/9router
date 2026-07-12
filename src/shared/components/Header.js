@@ -83,6 +83,14 @@ const getPageInfo = (pathname) => {
       icon: "layers",
       breadcrumbs: [],
     };
+  if (pathname.includes("/live"))
+    return {
+      title: "Live Requests",
+      description:
+        "Watch ongoing requests stream in realtime and review request history",
+      icon: "monitoring",
+      breadcrumbs: [],
+    };
   if (pathname.includes("/usage"))
     return {
       title: "Usage & Analytics",
