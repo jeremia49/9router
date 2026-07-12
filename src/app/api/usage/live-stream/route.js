@@ -19,13 +19,15 @@ export async function GET() {
 
       const onStart = (request) => send({ type: "start", request });
       const onDelta = ({ updates }) => send({ type: "delta", updates });
-      const onEnd = ({ id }) => send({ type: "end", id });
+      const onFinish = (request) => send({ type: "finish", request });
+      const onEvict = ({ id }) => send({ type: "evict", id });
 
       function cleanup() {
         state.closed = true;
         liveEmitter.off("start", onStart);
         liveEmitter.off("delta", onDelta);
-        liveEmitter.off("end", onEnd);
+        liveEmitter.off("finish", onFinish);
+        liveEmitter.off("evict", onEvict);
         clearInterval(state.keepalive);
       }
       state.cleanup = cleanup;
@@ -33,7 +35,8 @@ export async function GET() {
       // Subscribe first, then send snapshot so no live event is missed.
       liveEmitter.on("start", onStart);
       liveEmitter.on("delta", onDelta);
-      liveEmitter.on("end", onEnd);
+      liveEmitter.on("finish", onFinish);
+      liveEmitter.on("evict", onEvict);
 
       send({ type: "snapshot", requests: getLiveRequests() });
 
