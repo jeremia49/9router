@@ -98,6 +98,7 @@ function publicRecord(rec) {
     content: rec.content,
     thinking: rec.thinking,
     tokens: rec.tokens,
+    finishedAt: rec.finishedAt,
   };
 }
 
@@ -131,9 +132,10 @@ export function liveStart({ id, provider, model, connectionId, account, body, st
     content: "",
     thinking: "",
     tokens: null,
+    finishedAt: null,
   };
   liveRequests.set(id, rec);
-  const timer = setTimeout(() => liveFinish(id), LIVE_TTL_MS);
+  const timer = setTimeout(() => liveEvict(id), LIVE_TTL_MS);
   timer?.unref?.();
   evictTimers.set(id, timer);
   liveEmitter.emit("start", publicRecord(rec));
@@ -141,7 +143,7 @@ export function liveStart({ id, provider, model, connectionId, account, body, st
 
 export function liveAppend(id, { content = "", thinking = "" } = {}) {
   const rec = liveRequests.get(id);
-  if (!rec) return;
+  if (!rec || rec.status === "done") return;
   rec.content += content;
   rec.thinking += thinking;
   rec.status = "streaming";
@@ -160,12 +162,30 @@ export function liveAppend(id, { content = "", thinking = "" } = {}) {
 
 export function liveFinish(id, { tokens } = {}) {
   const rec = liveRequests.get(id);
+  if (!rec || rec.status === "done") return;
+  rec.status = "done";
+  rec.finishedAt = Date.now();
+  if (tokens !== undefined) rec.tokens = tokens;
+  // Drop any pending delta for this id so no stale append lands after finish;
+  // the finish event carries the authoritative full content instead.
+  deltaBuf.delete(id);
+  // Keep the record visible; re-arm eviction to run TTL after completion.
+  clearTimeout(evictTimers.get(id));
+  const timer = setTimeout(() => liveEvict(id), LIVE_TTL_MS);
+  timer?.unref?.();
+  evictTimers.set(id, timer);
+  liveEmitter.emit("finish", publicRecord(rec));
+}
+
+// Hard-remove a record from memory (TTL backstop). Client drops the card.
+function liveEvict(id) {
+  const rec = liveRequests.get(id);
   if (!rec) return;
   clearTimeout(evictTimers.get(id));
   evictTimers.delete(id);
   liveRequests.delete(id);
   deltaBuf.delete(id);
-  liveEmitter.emit("end", { id });
+  liveEmitter.emit("evict", { id });
 }
 
 export function getLiveRequests() {

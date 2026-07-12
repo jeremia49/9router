@@ -99,7 +99,10 @@ function LiveCard({ request, providerCache, now }) {
   }, [content]);
 
   const providerName = getProviderName(request.provider, providerCache);
-  const elapsed = formatElapsed(now - request.startedAt);
+  const isDone = request.status === "done";
+  const statusLabel = isDone ? "Done" : request.status === "streaming" ? "Streaming" : "Pending";
+  const elapsedMs = isDone && request.finishedAt ? request.finishedAt - request.startedAt : now - request.startedAt;
+  const elapsed = formatElapsed(elapsedMs);
 
   return (
     <Card className="flex min-w-0 flex-col gap-3 p-4">
@@ -112,8 +115,16 @@ function LiveCard({ request, providerCache, now }) {
             {request.account}
           </span>
         )}
+        <span className={cn(
+          "rounded-full px-2 py-0.5 text-xs font-medium",
+          isDone
+            ? "bg-black/5 text-text-muted dark:bg-white/10"
+            : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+        )}>
+          {statusLabel}
+        </span>
         <span className="ml-auto flex items-center gap-1.5 text-xs text-text-muted">
-          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+          {!isDone && <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" />}
           {elapsed}
         </span>
       </div>
@@ -132,7 +143,7 @@ function LiveCard({ request, providerCache, now }) {
         ref={preRef}
         className="max-h-[300px] min-h-[48px] max-w-full overflow-auto whitespace-pre-wrap rounded-lg border border-black/5 bg-black/5 p-3 font-mono text-xs text-text-main dark:border-white/5 dark:bg-white/5"
       >
-        {content || (request.status === "pending" ? "Waiting for response…" : "")}
+        {content || (isDone ? "[No content]" : request.status === "pending" ? "Waiting for response…" : "")}
       </pre>
 
       <CollapsibleSection title="View full input" icon="input">
@@ -191,7 +202,10 @@ export default function LiveRequestsClient() {
               });
             }
           }
-        } else if (msg.type === "end") {
+        } else if (msg.type === "finish") {
+          // Authoritative final record — replace in place, keep it visible as "done".
+          next.set(msg.request.id, msg.request);
+        } else if (msg.type === "evict") {
           next.delete(msg.id);
         }
         return next;

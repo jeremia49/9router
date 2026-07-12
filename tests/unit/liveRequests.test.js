@@ -27,7 +27,12 @@ function waitEvent(name, timeoutMs = 1000) {
 
 describe("liveRequests registry", () => {
   beforeEach(() => {
-    for (const r of getLiveRequests()) liveFinish(r.id);
+    // liveFinish now retains records as "done"; hard-reset the in-memory
+    // registry between tests via the same global slots the module uses.
+    global._liveRequests?.clear?.();
+    global._liveDeltaBuf?.clear?.();
+    for (const t of global._liveEvictTimers?.values?.() ?? []) clearTimeout(t);
+    global._liveEvictTimers?.clear?.();
   });
 
   it("liveStart registers a pending record and emits start", async () => {
@@ -58,16 +63,42 @@ describe("liveRequests registry", () => {
     expect(rec.status).toBe("streaming");
   });
 
-  it("liveFinish removes the record and emits end", async () => {
+  it("liveFinish retains the record as done and emits finish", async () => {
     liveStart({ id: "c", provider: "openai", model: "m", body: { messages: [{ role: "user", content: "hi" }] }, stream: true });
-    expect(getLiveRequests().some((r) => r.id === "c")).toBe(true);
+    liveAppend("c", { content: "partial" });
 
-    const ended = waitEvent("end");
-    liveFinish("c");
+    const finished = waitEvent("finish");
+    liveFinish("c", { tokens: { prompt_tokens: 3, completion_tokens: 5 } });
 
-    const evt = await ended;
-    expect(evt).toEqual({ id: "c" });
-    expect(getLiveRequests().some((r) => r.id === "c")).toBe(false);
+    const evt = await finished;
+    expect(evt.id).toBe("c");
+    expect(evt.status).toBe("done");
+    expect(evt.content).toBe("partial");
+    expect(evt.tokens).toEqual({ prompt_tokens: 3, completion_tokens: 5 });
+
+    // Record stays visible (until TTL eviction), now marked done.
+    const rec = getLiveRequests().find((r) => r.id === "c");
+    expect(rec).toBeTruthy();
+    expect(rec.status).toBe("done");
+    expect(typeof rec.finishedAt).toBe("number");
+  });
+
+  it("a second liveFinish on a done record is a no-op", async () => {
+    liveStart({ id: "d", provider: "openai", model: "m", body: { messages: [{ role: "user", content: "hi" }] }, stream: true });
+    liveFinish("d");
+    const rec1 = getLiveRequests().find((r) => r.id === "d");
+    const firstFinishedAt = rec1.finishedAt;
+
+    let fired = false;
+    const handler = () => { fired = true; };
+    liveEmitter.on("finish", handler);
+    liveFinish("d", { tokens: { prompt_tokens: 9 } });
+    liveEmitter.off("finish", handler);
+
+    const rec2 = getLiveRequests().find((r) => r.id === "d");
+    expect(fired).toBe(false);
+    expect(rec2.finishedAt).toBe(firstFinishedAt);
+    expect(rec2.tokens).toBeNull();
   });
 
   it("liveStart is a no-op when observability is disabled", async () => {
