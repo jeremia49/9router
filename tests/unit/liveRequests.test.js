@@ -8,7 +8,7 @@ vi.mock("@/lib/db/repos/settingsRepo.js", () => ({
   getSettings: vi.fn(async () => ({ enableObservability: true })),
 }));
 
-import { liveStart, liveAppend, liveFinish, getLiveRequests, liveEmitter } from "@/lib/liveRequests.js";
+import { liveStart, liveAppend, liveFinish, getLiveRequests, clearLiveRequests, liveEmitter } from "@/lib/liveRequests.js";
 
 function waitEvent(name, timeoutMs = 1000) {
   return new Promise((resolve, reject) => {
@@ -99,6 +99,55 @@ describe("liveRequests registry", () => {
     expect(fired).toBe(false);
     expect(rec2.finishedAt).toBe(firstFinishedAt);
     expect(rec2.tokens).toBeNull();
+  });
+
+  it("getLiveRequests returns newest first", async () => {
+    liveStart({ id: "older", provider: "openai", model: "m", body: {}, stream: true });
+    await new Promise((r) => setTimeout(r, 5));
+    liveStart({ id: "newer", provider: "openai", model: "m", body: {}, stream: true });
+
+    const recs = getLiveRequests();
+    expect(recs[0].id).toBe("newer");
+    expect(recs[1].id).toBe("older");
+  });
+
+  it("clearLiveRequests empties the registry and emits clear", async () => {
+    liveStart({ id: "e1", provider: "openai", model: "m", body: {}, stream: true });
+    liveStart({ id: "e2", provider: "openai", model: "m", body: {}, stream: true });
+    expect(getLiveRequests()).toHaveLength(2);
+
+    const cleared = waitEvent("clear");
+    clearLiveRequests();
+    await cleared;
+
+    expect(getLiveRequests()).toHaveLength(0);
+  });
+
+  it("liveFinish auto-evicts after 10s when liveAutoDelete is on", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/db/repos/settingsRepo.js", () => ({
+      getSettings: async () => ({ enableObservability: true, liveAutoDelete: true }),
+    }));
+    const mod = await import("@/lib/liveRequests.js");
+
+    // Warm the settings cache so the auto-delete flag resolves before we finish.
+    mod.liveStart({ id: "warm", provider: "openai", model: "m", body: {}, stream: true });
+    await new Promise((r) => setTimeout(r, 50));
+
+    vi.useFakeTimers();
+    try {
+      mod.liveStart({ id: "auto", provider: "openai", model: "m", body: {}, stream: true });
+      mod.liveFinish("auto");
+      expect(mod.getLiveRequests().some((r) => r.id === "auto")).toBe(true);
+
+      vi.advanceTimersByTime(10000);
+      expect(mod.getLiveRequests().some((r) => r.id === "auto")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    vi.doUnmock("@/lib/db/repos/settingsRepo.js");
+    vi.resetModules();
   });
 
   it("liveStart is a no-op when observability is disabled", async () => {
