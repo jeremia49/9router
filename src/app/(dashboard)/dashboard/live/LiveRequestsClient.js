@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import Card from "@/shared/components/Card";
+import Button from "@/shared/components/Button";
+import Toggle from "@/shared/components/Toggle";
 import { cn } from "@/shared/utils/cn";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
 import RequestDetailsTab from "@/app/(dashboard)/dashboard/usage/components/RequestDetailsTab";
@@ -159,6 +161,23 @@ export default function LiveRequestsClient() {
   const [requests, setRequests] = useState(() => new Map());
   const [providerCache, setProviderCache] = useState(null);
   const [now, setNow] = useState(() => Date.now());
+  const [liveEnabled, setLiveEnabled] = useState(null);
+  const [autoDelete, setAutoDelete] = useState(null);
+  const [clearing, setClearing] = useState(false);
+
+  // Live-capture enabled state (shared with profile's enableObservability gate)
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/settings")
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        setLiveEnabled(data.enableObservability === true);
+        setAutoDelete(data.liveAutoDelete === true);
+      })
+      .catch(() => { if (!cancelled) setLiveEnabled(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   // Provider name cache
   useEffect(() => {
@@ -177,8 +196,9 @@ export default function LiveRequestsClient() {
     return () => clearInterval(t);
   }, []);
 
-  // Live SSE
+  // Live SSE — only while enabled, so a disabled dashboard holds no server connection
   useEffect(() => {
+    if (!liveEnabled) return;
     const es = new EventSource("/api/usage/live-stream");
     es.onmessage = (e) => {
       let msg;
@@ -207,22 +227,90 @@ export default function LiveRequestsClient() {
           next.set(msg.request.id, msg.request);
         } else if (msg.type === "evict") {
           next.delete(msg.id);
+        } else if (msg.type === "clear") {
+          next.clear();
         }
         return next;
       });
     };
     return () => es.close();
-  }, []);
+  }, [liveEnabled]);
 
-  const ongoing = [...requests.values()].sort((a, b) => a.startedAt - b.startedAt);
+  const toggleLive = async (enabled) => {
+    setLiveEnabled(enabled);
+    try {
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enableObservability: enabled }),
+      });
+    } catch (err) {
+      console.error("Failed to update live capture:", err);
+    }
+  };
+
+  const toggleAutoDelete = async (enabled) => {
+    setAutoDelete(enabled);
+    try {
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ liveAutoDelete: enabled }),
+      });
+    } catch (err) {
+      console.error("Failed to update auto-delete:", err);
+    }
+  };
+
+  const clearAll = async () => {
+    setClearing(true);
+    try {
+      await fetch("/api/usage/live-stream", { method: "DELETE" });
+    } catch (err) {
+      console.error("Failed to clear live requests:", err);
+    } finally {
+      setClearing(false);
+    }
+    setRequests(new Map());
+  };
+
+  const ongoing = [...requests.values()].sort((a, b) => b.startedAt - a.startedAt);
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <section className="flex min-w-0 flex-col gap-4">
-        <h2 className="text-lg font-semibold text-text-main">Ongoing</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-text-main">Ongoing</h2>
+          <div className="flex items-center gap-3">
+            <Toggle
+              checked={liveEnabled === true}
+              onChange={toggleLive}
+              disabled={liveEnabled === null}
+              label="Live capture"
+            />
+            <Toggle
+              checked={autoDelete === true}
+              onChange={toggleAutoDelete}
+              disabled={autoDelete === null}
+              label="Auto-delete (10s)"
+            />
+            <Button
+              variant="danger"
+              size="sm"
+              icon="delete"
+              onClick={clearAll}
+              loading={clearing}
+              disabled={ongoing.length === 0}
+            >
+              Clear all
+            </Button>
+          </div>
+        </div>
         {ongoing.length === 0 ? (
           <p className="text-sm text-text-muted">
-            No ongoing requests. If Observability is off in your profile, live capture is disabled.
+            {liveEnabled === false
+              ? "Live capture is off. Turn it on to stream incoming requests."
+              : "No ongoing requests. If Observability is off in your profile, live capture is disabled."}
           </p>
         ) : (
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">

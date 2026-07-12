@@ -1,6 +1,7 @@
 import { EventEmitter } from "events";
 
 const LIVE_TTL_MS = 5 * 60 * 1000;
+const LIVE_AUTO_DELETE_MS = 10 * 1000;
 const DELTA_FLUSH_MS = 150;
 const ENABLED_CACHE_TTL_MS = 5000;
 
@@ -20,21 +21,34 @@ const evictTimers = global._liveEvictTimers;
 
 export const liveEmitter = global._liveEmitter;
 
-// --- Enabled gate (cached, off the hot path) --------------------------------
+// --- Cached settings gate (off the hot path) --------------------------------
 let cachedEnabled = true; // default true until first resolve (matches settings default)
-let cachedEnabledTs = 0;
+let cachedAutoDelete = false; // default false until first resolve
+let cachedSettingsTs = 0;
 
-function isLiveEnabled() {
-  if (Date.now() - cachedEnabledTs >= ENABLED_CACHE_TTL_MS) {
-    cachedEnabledTs = Date.now();
+function refreshSettingsCache() {
+  if (Date.now() - cachedSettingsTs >= ENABLED_CACHE_TTL_MS) {
+    cachedSettingsTs = Date.now();
     import("@/lib/db/repos/settingsRepo.js")
       .then(({ getSettings }) => getSettings())
       .then((settings) => {
         cachedEnabled = settings.enableObservability === true;
+        cachedAutoDelete = settings.liveAutoDelete === true;
       })
       .catch(() => {});
   }
+}
+
+function isLiveEnabled() {
+  refreshSettingsCache();
   return cachedEnabled;
+}
+
+// Delay before a finished record is evicted: short when auto-delete is on so
+// the registry stays small, otherwise the full TTL backstop.
+function finishEvictMs() {
+  refreshSettingsCache();
+  return cachedAutoDelete ? LIVE_AUTO_DELETE_MS : LIVE_TTL_MS;
 }
 
 // --- Preview extraction -----------------------------------------------------
@@ -171,7 +185,7 @@ export function liveFinish(id, { tokens } = {}) {
   deltaBuf.delete(id);
   // Keep the record visible; re-arm eviction to run TTL after completion.
   clearTimeout(evictTimers.get(id));
-  const timer = setTimeout(() => liveEvict(id), LIVE_TTL_MS);
+  const timer = setTimeout(() => liveEvict(id), finishEvictMs());
   timer?.unref?.();
   evictTimers.set(id, timer);
   liveEmitter.emit("finish", publicRecord(rec));
@@ -188,8 +202,16 @@ function liveEvict(id) {
   liveEmitter.emit("evict", { id });
 }
 
+export function clearLiveRequests() {
+  for (const timer of evictTimers.values()) clearTimeout(timer);
+  evictTimers.clear();
+  liveRequests.clear();
+  deltaBuf.clear();
+  liveEmitter.emit("clear", {});
+}
+
 export function getLiveRequests() {
   return [...liveRequests.values()]
     .map(publicRecord)
-    .sort((a, b) => a.startedAt - b.startedAt);
+    .sort((a, b) => b.startedAt - a.startedAt);
 }

@@ -1,4 +1,4 @@
-import { liveEmitter, getLiveRequests } from "@/lib/liveRequests.js";
+import { liveEmitter, getLiveRequests, clearLiveRequests } from "@/lib/liveRequests.js";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +21,7 @@ export async function GET() {
       const onDelta = ({ updates }) => send({ type: "delta", updates });
       const onFinish = (request) => send({ type: "finish", request });
       const onEvict = ({ id }) => send({ type: "evict", id });
+      const onClear = () => send({ type: "clear" });
 
       function cleanup() {
         state.closed = true;
@@ -28,6 +29,7 @@ export async function GET() {
         liveEmitter.off("delta", onDelta);
         liveEmitter.off("finish", onFinish);
         liveEmitter.off("evict", onEvict);
+        liveEmitter.off("clear", onClear);
         clearInterval(state.keepalive);
       }
       state.cleanup = cleanup;
@@ -37,6 +39,7 @@ export async function GET() {
       liveEmitter.on("delta", onDelta);
       liveEmitter.on("finish", onFinish);
       liveEmitter.on("evict", onEvict);
+      liveEmitter.on("clear", onClear);
 
       send({ type: "snapshot", requests: getLiveRequests() });
 
@@ -64,5 +67,12 @@ export async function GET() {
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
     },
+  });
+}
+
+export async function DELETE() {
+  clearLiveRequests();
+  return new Response(JSON.stringify({ ok: true }), {
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
   });
 }
