@@ -104,6 +104,7 @@ function publicRecord(rec) {
     model: rec.model,
     connectionId: rec.connectionId,
     account: rec.account,
+    clientIp: rec.clientIp,
     stream: rec.stream,
     startedAt: rec.startedAt,
     status: rec.status,
@@ -130,7 +131,7 @@ function flushDeltas() {
 }
 
 // --- Public API -------------------------------------------------------------
-export function liveStart({ id, provider, model, connectionId, account, body, stream }) {
+export function liveStart({ id, provider, model, connectionId, account, body, stream, clientIp }) {
   if (!id || !isLiveEnabled()) return;
   const rec = {
     id,
@@ -138,6 +139,7 @@ export function liveStart({ id, provider, model, connectionId, account, body, st
     model,
     connectionId,
     account,
+    clientIp: clientIp || null,
     stream: !!stream,
     startedAt: Date.now(),
     status: "pending",

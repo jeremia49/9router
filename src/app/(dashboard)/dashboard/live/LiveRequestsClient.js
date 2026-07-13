@@ -117,6 +117,11 @@ function LiveCard({ request, providerCache, now }) {
             {request.account}
           </span>
         )}
+        {request.clientIp && (
+          <span className="rounded-full bg-black/5 px-2 py-0.5 font-mono text-xs text-text-muted dark:bg-white/10">
+            {request.clientIp}
+          </span>
+        )}
         <span className={cn(
           "rounded-full px-2 py-0.5 text-xs font-medium",
           isDone
