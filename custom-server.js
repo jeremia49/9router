@@ -22,10 +22,13 @@ http.createServer = (...args) => {
     const xRealIp = req.headers["x-real-ip"];
     const viaProxy = !!(xff || xRealIp);
     const isLoopbackProxy = socketIp === "127.0.0.1" || socketIp === "::1" || socketIp === "::ffff:127.0.0.1";
-    // Trust forwarding headers only when the TCP peer is a local reverse proxy.
-    // Direct/public sockets remain keyed by the unspoofable peer address.
+    // Trust forwarding headers when the TCP peer is a local reverse proxy, or
+    // when TRUST_PROXY=true opts in explicitly (e.g. Caddy fronting a Docker
+    // container, where the peer is the bridge gateway, not loopback).
+    // Direct/public sockets without opt-in remain keyed by the unspoofable peer.
     const proxyIp = xRealIp || (xff ? String(xff).split(",")[0].trim() : "");
-    const ip = isLoopbackProxy && proxyIp ? proxyIp : socketIp;
+    const trustForwarded = isLoopbackProxy || TRUST_PROXY;
+    const realIp = trustForwarded && proxyIp ? proxyIp : socketIp;
     delete req.headers["x-9r-real-ip"];
     delete req.headers["x-forwarded-for"];
     delete req.headers["x-9r-via-proxy"];

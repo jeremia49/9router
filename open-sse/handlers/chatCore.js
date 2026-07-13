@@ -245,7 +245,11 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const executor = getExecutor(provider);
   trackPendingRequest(model, provider, connectionId, true);
   const liveId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-  liveStart({ id: liveId, provider, model, connectionId, account: credentials?.connectionName || credentials?.connectionId, body, stream });
+  const clientIp = clientRawRequest?.headers?.["x-9r-real-ip"]
+    || clientRawRequest?.headers?.["x-forwarded-for"]?.split(",")[0]?.trim()
+    || clientRawRequest?.headers?.["x-real-ip"]
+    || null;
+  liveStart({ id: liveId, provider, model, connectionId, account: credentials?.connectionName || credentials?.connectionId, body, stream, clientIp });
   appendRequestLog({ model, provider, connectionId, status: "PENDING" }).catch(() => { });
 
   const msgCount = translatedBody.messages?.length || translatedBody.input?.length || translatedBody.contents?.length || translatedBody.request?.contents?.length || 0;
