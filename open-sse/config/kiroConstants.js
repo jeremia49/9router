@@ -25,8 +25,9 @@ export const KIRO_THINKING_SUFFIX = "-thinking";
 // Used when an account cannot resolve its own profileArn. Builder ID and social
 // (Google/GitHub) sign-ins map to different shared profiles.
 export const KIRO_DEFAULT_PROFILE_ARNS = {
-  "builder-id": "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX",
-  social: "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK",
+	"builder-id":
+		"arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX",
+	social: "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK",
 };
 
 // Back-compat single default (Builder ID).
@@ -34,8 +35,10 @@ export const KIRO_DEFAULT_PROFILE_ARN = KIRO_DEFAULT_PROFILE_ARNS["builder-id"];
 
 /** Resolve the shared default profileArn for a given auth method. */
 export function resolveDefaultProfileArn(authMethod) {
-  const social = authMethod === "google" || authMethod === "github";
-  return social ? KIRO_DEFAULT_PROFILE_ARNS.social : KIRO_DEFAULT_PROFILE_ARNS["builder-id"];
+	const social = authMethod === "google" || authMethod === "github";
+	return social
+		? KIRO_DEFAULT_PROFILE_ARNS.social
+		: KIRO_DEFAULT_PROFILE_ARNS["builder-id"];
 }
 
 export const KIRO_THINKING_BUDGET_DEFAULT = 16000;
@@ -106,110 +109,135 @@ REMEMBER: When in doubt, write LESS per operation. Multiple small operations > o
  * @returns {number|null} budget to inject, or null when thinking is disabled
  */
 export function resolveKiroThinkingBudget(body, headers, model) {
-  const cfg = extractThinking(body);
-  if (cfg) {
-    if (cfg.mode === "none") return null;
-    if (cfg.mode === "level" && cfg.level === "disabled") return null;
-    if (cfg.mode === "budget") return cfg.budget;
-    if (cfg.mode === "level") return effortToBudget(cfg.level) ?? KIRO_THINKING_BUDGET_DEFAULT;
-    return KIRO_THINKING_BUDGET_DEFAULT;
-  }
+	const cfg = extractThinking(body);
+	if (cfg) {
+		if (cfg.mode === "none") return null;
+		if (cfg.mode === "level" && cfg.level === "disabled") return null;
+		if (cfg.mode === "budget") return cfg.budget;
+		if (cfg.mode === "level")
+			return effortToBudget(cfg.level) ?? KIRO_THINKING_BUDGET_DEFAULT;
+		return KIRO_THINKING_BUDGET_DEFAULT;
+	}
 
-  if (headers) {
-    const beta = pickHeader(headers, "anthropic-beta");
-    if (typeof beta === "string" && beta.toLowerCase().includes("interleaved-thinking")) {
-      return KIRO_THINKING_BUDGET_DEFAULT;
-    }
-  }
+	if (headers) {
+		const beta = pickHeader(headers, "anthropic-beta");
+		if (
+			typeof beta === "string" &&
+			beta.toLowerCase().includes("interleaved-thinking")
+		) {
+			return KIRO_THINKING_BUDGET_DEFAULT;
+		}
+	}
 
-  if (containsThinkingModeTag(body)) return KIRO_THINKING_BUDGET_DEFAULT;
+	if (containsThinkingModeTag(body)) return KIRO_THINKING_BUDGET_DEFAULT;
 
-  if (typeof model === "string" && model) {
-    const m = model.toLowerCase();
-    if (m.includes("thinking") || m.includes("-reason")) return KIRO_THINKING_BUDGET_DEFAULT;
-  }
+	if (typeof model === "string" && model) {
+		const m = model.toLowerCase();
+		if (m.includes("thinking") || m.includes("-reason"))
+			return KIRO_THINKING_BUDGET_DEFAULT;
+	}
 
-  return null;
+	return null;
 }
 
 export function extractKiroEffortLevel(body) {
-  const effort =
-    body?.output_config?.effort ??
-    body?.reasoning_effort ??
-    (typeof body?.reasoning === "object" ? body.reasoning?.effort : null);
-  if (typeof effort !== "string") return null;
-  const normalized = effort.toLowerCase();
-  if (normalized === "none" || normalized === "off" || normalized === "disabled") return null;
-  if (normalized === "xhigh" || normalized === "max") return "high";
-  if (["low", "medium", "high"].includes(normalized)) return normalized;
-  return null;
+	const effort =
+		body?.output_config?.effort ??
+		body?.reasoning_effort ??
+		(typeof body?.reasoning === "object" ? body.reasoning?.effort : null);
+	if (typeof effort !== "string") return null;
+	const normalized = effort.toLowerCase();
+	if (
+		normalized === "none" ||
+		normalized === "off" ||
+		normalized === "disabled"
+	)
+		return null;
+	if (normalized === "xhigh" || normalized === "max") return "high";
+	if (["low", "medium", "high"].includes(normalized)) return normalized;
+	return null;
 }
 
 function extractKiroGptEffortLevel(body) {
-  const effort =
-    body?.output_config?.effort ??
-    body?.reasoning_effort ??
-    (typeof body?.reasoning === "object" ? body.reasoning?.effort : null);
-  if (typeof effort !== "string") return null;
-  const normalized = effort.toLowerCase();
-  if (normalized === "max") return "xhigh";
-  // Kiro CLI does not advertise an explicit GPT "none" wire value; omit it.
-  if (["low", "medium", "high", "xhigh"].includes(normalized)) {
-    return normalized;
-  }
-  return null;
+	const effort =
+		body?.output_config?.effort ??
+		body?.reasoning_effort ??
+		(typeof body?.reasoning === "object" ? body.reasoning?.effort : null);
+	if (typeof effort !== "string") return null;
+	const normalized = effort.toLowerCase();
+	if (normalized === "max") return "xhigh";
+	// Kiro CLI does not advertise an explicit GPT "none" wire value; omit it.
+	if (["low", "medium", "high", "xhigh"].includes(normalized)) {
+		return normalized;
+	}
+	return null;
 }
 
-export function buildKiroAdditionalModelRequestFields(body, effortPath = "output_config") {
-  const effort = effortPath === "reasoning"
-    ? extractKiroGptEffortLevel(body)
-    : extractKiroEffortLevel(body);
-  if (!effort) return undefined;
-  if (effortPath === "reasoning") {
-    // Mirrors Kiro CLI/KAS buildEffortRequestFields("reasoning") for GPT.
-    return { reasoning: { effort } };
-  }
-  // Mirrors Kiro CLI/KAS buildEffortRequestFields("output_config").
-  return {
-    thinking: { type: "adaptive", display: "summarized" },
-    output_config: { effort },
-  };
+export function buildKiroAdditionalModelRequestFields(
+	body,
+	effortPath = "output_config",
+) {
+	const effort =
+		effortPath === "reasoning"
+			? extractKiroGptEffortLevel(body)
+			: extractKiroEffortLevel(body);
+	if (!effort) return undefined;
+	if (effortPath === "reasoning") {
+		// Mirrors Kiro CLI/KAS buildEffortRequestFields("reasoning") for GPT.
+		return { reasoning: { effort } };
+	}
+	// Mirrors Kiro CLI/KAS buildEffortRequestFields("output_config").
+	return {
+		thinking: { type: "adaptive", display: "summarized" },
+		output_config: { effort },
+	};
 }
 
 export function resolveKiroEffortPath(model) {
-  if (typeof model !== "string") return null;
-  const normalized = model.toLowerCase().replace(/-/g, ".");
-  if (/(?:^|[/.])gpt[/.]5[/.]6(?:[/.]|$)/.test(normalized)) {
-    return "reasoning";
-  }
-  if (!normalized.includes("claude")) return null;
-  const match = normalized.match(/(?:^|[/.])claude(?:[/.][a-z]+)*[/.](\d+)(?:[/.](\d+))?(?:[/.]|$)/);
-  if (!match) return null;
-  const [, majorText, minorText] = match;
-  const major = Number(majorText);
-  const minor = minorText === undefined ? null : Number(minorText);
-  const dateSuffixMinor = minor !== null && minor >= 1000;
-  // Kiro rejected additionalModelRequestFields on legacy 4.5 models in live smoke.
-  // Default future Claude/Kiro models to supported so new model releases do not
-  // need a code allowlist update.
-  return major < 4 || (major === 4 && (minor === null || minor <= 5 || dateSuffixMinor))
-    ? null
-    : "output_config";
+	if (typeof model !== "string") return null;
+	const normalized = model.toLowerCase().replace(/-/g, ".");
+	if (/(?:^|[/.])gpt[/.]5[/.]6(?:[/.]|$)/.test(normalized)) {
+		return "reasoning";
+	}
+	if (!normalized.includes("claude")) return null;
+	const match = normalized.match(
+		/(?:^|[/.])claude(?:[/.][a-z]+)*[/.](\d+)(?:[/.](\d+))?(?:[/.]|$)/,
+	);
+	if (!match) return null;
+	const [, majorText, minorText] = match;
+	const major = Number(majorText);
+	const minor = minorText === undefined ? null : Number(minorText);
+	const dateSuffixMinor = minor !== null && minor >= 1000;
+	// Kiro rejected additionalModelRequestFields on legacy 4.5 models in live smoke.
+	// Default future Claude/Kiro models to supported so new model releases do not
+	// need a code allowlist update.
+	//
+	// Claude >= 4.6 (opus 4.7/4.8, sonnet 5, and future releases) now route
+	// through the SAME native `reasoning.effort` path as GPT-5.6 instead of the
+	// legacy Claude adaptive `output_config` path. This drops both the
+	// `thinking:{type:adaptive}` field and the `<thinking_mode>` prompt-tag
+	// injection for those models.
+	return major < 4 ||
+		(major === 4 && (minor === null || minor <= 5 || dateSuffixMinor))
+		? null
+		: "reasoning";
 }
 
 export function supportsKiroAdditionalModelRequestFields(model) {
-  return resolveKiroEffortPath(model) !== null;
+	return resolveKiroEffortPath(model) !== null;
 }
 
 export function usesKiroNativeGptEffort(body, model) {
-  return resolveKiroEffortPath(model) === "reasoning"
-    && extractKiroGptEffortLevel(body) !== null;
+	return (
+		resolveKiroEffortPath(model) === "reasoning" &&
+		extractKiroGptEffortLevel(body) !== null
+	);
 }
 
 export function buildKiroAdditionalModelRequestFieldsForModel(body, model) {
-  const effortPath = resolveKiroEffortPath(model);
-  if (!effortPath) return undefined;
-  return buildKiroAdditionalModelRequestFields(body, effortPath);
+	const effortPath = resolveKiroEffortPath(model);
+	if (!effortPath) return undefined;
+	return buildKiroAdditionalModelRequestFields(body, effortPath);
 }
 
 /**
@@ -222,7 +250,7 @@ export function buildKiroAdditionalModelRequestFieldsForModel(body, model) {
  * @returns {boolean}
  */
 export function isThinkingEnabled(body, headers, model) {
-  return resolveKiroThinkingBudget(body, headers, model) !== null;
+	return resolveKiroThinkingBudget(body, headers, model) !== null;
 }
 
 /**
@@ -234,7 +262,7 @@ export function isThinkingEnabled(body, headers, model) {
  * @returns {boolean}
  */
 export function isAgenticModel(model) {
-  return typeof model === "string" && model.endsWith(KIRO_AGENTIC_SUFFIX);
+	return typeof model === "string" && model.endsWith(KIRO_AGENTIC_SUFFIX);
 }
 
 /**
@@ -244,8 +272,8 @@ export function isAgenticModel(model) {
  * @returns {string}
  */
 export function stripAgenticSuffix(model) {
-  if (!isAgenticModel(model)) return model;
-  return model.slice(0, -KIRO_AGENTIC_SUFFIX.length);
+	if (!isAgenticModel(model)) return model;
+	return model.slice(0, -KIRO_AGENTIC_SUFFIX.length);
 }
 
 /**
@@ -261,7 +289,7 @@ export function stripAgenticSuffix(model) {
  * @returns {boolean}
  */
 export function isThinkingModel(model) {
-  return typeof model === "string" && model.endsWith(KIRO_THINKING_SUFFIX);
+	return typeof model === "string" && model.endsWith(KIRO_THINKING_SUFFIX);
 }
 
 /**
@@ -271,8 +299,8 @@ export function isThinkingModel(model) {
  * @returns {string}
  */
 export function stripThinkingSuffix(model) {
-  if (!isThinkingModel(model)) return model;
-  return model.slice(0, -KIRO_THINKING_SUFFIX.length);
+	if (!isThinkingModel(model)) return model;
+	return model.slice(0, -KIRO_THINKING_SUFFIX.length);
 }
 
 /**
@@ -292,18 +320,18 @@ export function stripThinkingSuffix(model) {
  * @returns {{ upstream: string, agentic: boolean, thinking: boolean }}
  */
 export function resolveKiroModel(model) {
-  let upstream = model;
-  let agentic = false;
-  let thinking = false;
-  if (isAgenticModel(upstream)) {
-    agentic = true;
-    upstream = stripAgenticSuffix(upstream);
-  }
-  if (isThinkingModel(upstream)) {
-    thinking = true;
-    upstream = stripThinkingSuffix(upstream);
-  }
-  return { upstream, agentic, thinking };
+	let upstream = model;
+	let agentic = false;
+	let thinking = false;
+	if (isAgenticModel(upstream)) {
+		agentic = true;
+		upstream = stripAgenticSuffix(upstream);
+	}
+	if (isThinkingModel(upstream)) {
+		thinking = true;
+		upstream = stripThinkingSuffix(upstream);
+	}
+	return { upstream, agentic, thinking };
 }
 
 /**
@@ -312,47 +340,55 @@ export function resolveKiroModel(model) {
  *
  * @param {number} [budget=KIRO_THINKING_BUDGET_DEFAULT]
  */
-export function buildThinkingSystemPrefix(budget = KIRO_THINKING_BUDGET_DEFAULT) {
-  const safeBudget = Math.max(1, Math.min(32000, Number(budget) || KIRO_THINKING_BUDGET_DEFAULT));
-  return `<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>${safeBudget}</max_thinking_length>`;
+export function buildThinkingSystemPrefix(
+	budget = KIRO_THINKING_BUDGET_DEFAULT,
+) {
+	const safeBudget = Math.max(
+		1,
+		Math.min(32000, Number(budget) || KIRO_THINKING_BUDGET_DEFAULT),
+	);
+	return `<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>${safeBudget}</max_thinking_length>`;
 }
 
 function pickHeader(headers, name) {
-  if (!headers) return undefined;
-  if (typeof headers.get === "function") {
-    return headers.get(name);
-  }
-  const lower = name.toLowerCase();
-  for (const key of Object.keys(headers)) {
-    if (key.toLowerCase() === lower) {
-      return headers[key];
-    }
-  }
-  return undefined;
+	if (!headers) return undefined;
+	if (typeof headers.get === "function") {
+		return headers.get(name);
+	}
+	const lower = name.toLowerCase();
+	for (const key of Object.keys(headers)) {
+		if (key.toLowerCase() === lower) {
+			return headers[key];
+		}
+	}
+	return undefined;
 }
 
 function containsThinkingModeTag(body) {
-  const messages = Array.isArray(body?.messages) ? body.messages : [];
-  for (const msg of messages) {
-    if (!msg) continue;
-    if (msg.role !== "system" && msg.role !== "user") continue;
-    const content = msg.content;
-    if (typeof content === "string") {
-      if (containsTagInText(content)) return true;
-    } else if (Array.isArray(content)) {
-      for (const part of content) {
-        const text = part?.text;
-        if (typeof text === "string" && containsTagInText(text)) return true;
-      }
-    }
-  }
-  if (typeof body?.system === "string" && containsTagInText(body.system)) return true;
-  return false;
+	const messages = Array.isArray(body?.messages) ? body.messages : [];
+	for (const msg of messages) {
+		if (!msg) continue;
+		if (msg.role !== "system" && msg.role !== "user") continue;
+		const content = msg.content;
+		if (typeof content === "string") {
+			if (containsTagInText(content)) return true;
+		} else if (Array.isArray(content)) {
+			for (const part of content) {
+				const text = part?.text;
+				if (typeof text === "string" && containsTagInText(text)) return true;
+			}
+		}
+	}
+	if (typeof body?.system === "string" && containsTagInText(body.system))
+		return true;
+	return false;
 }
 
 function containsTagInText(text) {
-  if (!text) return false;
-  if (!text.includes("<thinking_mode>")) return false;
-  return text.includes("<thinking_mode>enabled</thinking_mode>")
-    || text.includes("<thinking_mode>interleaved</thinking_mode>");
+	if (!text) return false;
+	if (!text.includes("<thinking_mode>")) return false;
+	return (
+		text.includes("<thinking_mode>enabled</thinking_mode>") ||
+		text.includes("<thinking_mode>interleaved</thinking_mode>")
+	);
 }
