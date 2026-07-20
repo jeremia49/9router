@@ -31,110 +31,128 @@ import { buildClineHeaders } from "@/shared/utils/clineAuth";
 
 // OAuth provider test endpoints
 const OAUTH_TEST_CONFIG = {
-  claude: { checkExpiry: true, refreshable: true },
-  codex: {
-    url: "https://chatgpt.com/backend-api/codex/responses",
-    method: "POST",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    extraHeaders: { "Content-Type": "application/json", "originator": "codex_cli_rs", "User-Agent": "codex_cli_rs/0.136.0" },
-    // Minimal invalid body — triggers fast 400 without consuming quota
-    body: JSON.stringify({ model: "gpt-5.3-codex", input: [], stream: false, store: false }),
-    // 400 (bad request) means auth succeeded; only 401/403 means token is bad
-    acceptStatuses: [400],
-    refreshable: true,
-  },
-  "gemini-cli": {
-    url: "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
-    method: "GET",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    refreshable: true,
-  },
-  antigravity: {
-    url: "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
-    method: "GET",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    refreshable: true,
-  },
-  github: {
-    url: "https://api.github.com/user",
-    method: "GET",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    extraHeaders: { "User-Agent": "9Router", "Accept": "application/vnd.github+json" },
-  },
-  iflow: {
-    // iFlow getUserInfo requires accessToken as query param, not header
-    buildUrl: (token) => `https://iflow.cn/api/oauth/getUserInfo?accessToken=${encodeURIComponent(token)}`,
-    method: "GET",
-    noAuth: true,
-  },
-  qwen: { checkExpiry: true, refreshable: true },
-  kiro: { checkExpiry: true, refreshable: true },
-  qoder: {
-    // Test by hitting Qoder's userinfo endpoint with the device token.
-    // refreshable: false because the device-flow refresh endpoint returns
-    // 403 for our flow (users re-login when expired). No checkExpiry —
-    // we want the actual URL probe to run so revoked tokens surface.
-    url: "https://openapi.qoder.sh/api/v1/userinfo",
-    method: "GET",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    refreshable: false,
-  },
-  "kimi-coding": { checkExpiry: true, refreshable: false },
-  cursor: { tokenExists: true },
-  kilocode: {
-    url: `${KILOCODE_CONFIG.apiBaseUrl}/api/profile`,
-    method: "GET",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-  },
-  cline: { refreshable: true },
-  gitlab: {
-    // Test by hitting the GitLab user API — requires api or read_user scope
-    url: "https://gitlab.com/api/v4/user",
-    method: "GET",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-  },
-  "codebuddy-cn": { tokenExists: true },
-  kimchi: {
-    url: KIMCHI_CONFIG.validationUrl || "https://api.cast.ai/v1/llm/openai/supported-providers",
-    method: "GET",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    extraHeaders: {
-      Accept: "application/json",
-      "User-Agent": "kimchi/0.1.40",
-    },
-    refreshable: false,
-  },
-  // Grok CLI / Grok Build — probe /v1/user (no inference quota). Headers mirror official CLI.
-  "grok-cli": {
-    url: PROVIDERS["grok-cli"]?.userUrl || "https://cli-chat-proxy.grok.com/v1/user",
-    method: "GET",
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    extraHeaders: {
-      Accept: "application/json",
-      ...(PROVIDERS["grok-cli"]?.headers || {
-        "User-Agent": "grok-pager/0.2.93 grok-shell/0.2.93 (linux; x86_64)",
-        "x-xai-token-auth": "xai-grok-cli",
-        "x-grok-client-identifier": "grok-pager",
-        "x-grok-client-version": "0.2.93",
-      }),
-    },
-    refreshable: true,
-    // Subscription spending-limit is not an auth failure — token is fine, credits aren't.
-    // Accept 402 so the connection stays "active" with a warning (same idea as Codex 400).
-    acceptStatuses: [402],
-    softFailMessage: {
-      402: "Connected, but Grok Build credits are exhausted (spending limit). Add credits or upgrade SuperGrok.",
-    },
-  },
+	claude: { checkExpiry: true, refreshable: true },
+	codex: {
+		url: "https://chatgpt.com/backend-api/codex/responses",
+		method: "POST",
+		authHeader: "Authorization",
+		authPrefix: "Bearer ",
+		extraHeaders: {
+			"Content-Type": "application/json",
+			originator: "codex_cli_rs",
+			"User-Agent": "codex_cli_rs/0.136.0",
+		},
+		// Minimal invalid body — triggers fast 400 without consuming quota
+		body: JSON.stringify({
+			model: "gpt-5.3-codex",
+			input: [],
+			stream: false,
+			store: false,
+		}),
+		// 400 (bad request) means auth succeeded; only 401/403 means token is bad
+		acceptStatuses: [400],
+		refreshable: true,
+	},
+	"gemini-cli": {
+		url: "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
+		method: "GET",
+		authHeader: "Authorization",
+		authPrefix: "Bearer ",
+		refreshable: true,
+	},
+	antigravity: {
+		url: "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
+		method: "GET",
+		authHeader: "Authorization",
+		authPrefix: "Bearer ",
+		refreshable: true,
+	},
+	github: {
+		url: "https://api.github.com/user",
+		method: "GET",
+		authHeader: "Authorization",
+		authPrefix: "Bearer ",
+		extraHeaders: {
+			"User-Agent": "9Router",
+			Accept: "application/vnd.github+json",
+		},
+	},
+	iflow: {
+		// iFlow getUserInfo requires accessToken as query param, not header
+		buildUrl: (token) =>
+			`https://iflow.cn/api/oauth/getUserInfo?accessToken=${encodeURIComponent(token)}`,
+		method: "GET",
+		noAuth: true,
+	},
+	qwen: { checkExpiry: true, refreshable: true },
+	kiro: { checkExpiry: true, refreshable: true },
+	qoder: {
+		// Test by hitting Qoder's userinfo endpoint with the device token.
+		// refreshable: false because the device-flow refresh endpoint returns
+		// 403 for our flow (users re-login when expired). No checkExpiry —
+		// we want the actual URL probe to run so revoked tokens surface.
+		url: "https://openapi.qoder.sh/api/v1/userinfo",
+		method: "GET",
+		authHeader: "Authorization",
+		authPrefix: "Bearer ",
+		refreshable: false,
+	},
+	kimi: { checkExpiry: true, refreshable: true },
+	"kimi-coding": { checkExpiry: true, refreshable: true },
+	cursor: { tokenExists: true },
+	kilocode: {
+		url: `${KILOCODE_CONFIG.apiBaseUrl}/api/profile`,
+		method: "GET",
+		authHeader: "Authorization",
+		authPrefix: "Bearer ",
+	},
+	cline: { refreshable: true },
+	gitlab: {
+		// Test by hitting the GitLab user API — requires api or read_user scope
+		url: "https://gitlab.com/api/v4/user",
+		method: "GET",
+		authHeader: "Authorization",
+		authPrefix: "Bearer ",
+	},
+	"codebuddy-cn": { tokenExists: true },
+	kimchi: {
+		url:
+			KIMCHI_CONFIG.validationUrl ||
+			"https://api.cast.ai/v1/llm/openai/supported-providers",
+		method: "GET",
+		authHeader: "Authorization",
+		authPrefix: "Bearer ",
+		extraHeaders: {
+			Accept: "application/json",
+			"User-Agent": "kimchi/0.1.40",
+		},
+		refreshable: false,
+	},
+	// Grok CLI / Grok Build — probe /v1/user (no inference quota). Headers mirror official CLI.
+	"grok-cli": {
+		url:
+			PROVIDERS["grok-cli"]?.userUrl ||
+			"https://cli-chat-proxy.grok.com/v1/user",
+		method: "GET",
+		authHeader: "Authorization",
+		authPrefix: "Bearer ",
+		extraHeaders: {
+			Accept: "application/json",
+			...(PROVIDERS["grok-cli"]?.headers || {
+				"User-Agent": "grok-pager/0.2.93 grok-shell/0.2.93 (linux; x86_64)",
+				"x-xai-token-auth": "xai-grok-cli",
+				"x-grok-client-identifier": "grok-pager",
+				"x-grok-client-version": "0.2.93",
+			}),
+		},
+		refreshable: true,
+		// Subscription spending-limit is not an auth failure — token is fine, credits aren't.
+		// Accept 402 so the connection stays "active" with a warning (same idea as Codex 400).
+		acceptStatuses: [402],
+		softFailMessage: {
+			402: "Connected, but Grok Build credits are exhausted (spending limit). Add credits or upgrade SuperGrok.",
+		},
+	},
 };
 
 /**
@@ -144,27 +162,31 @@ const OAUTH_TEST_CONFIG = {
  * Exported for unit tests.
  */
 export function classifyOAuthProbeResult(res, config, bodyText = "") {
-  if (!res) return { valid: false, error: "No response", soft: false };
-  const status = res.status;
-  const accepted = res.ok || (config?.acceptStatuses && config.acceptStatuses.includes(status));
-  if (!accepted) {
-    if (status === 401) return { valid: false, error: "Token invalid or revoked", soft: false };
-    if (status === 403) return { valid: false, error: "Access denied", soft: false };
-    return { valid: false, error: `API returned ${status}`, soft: false };
-  }
+	if (!res) return { valid: false, error: "No response", soft: false };
+	const status = res.status;
+	const accepted =
+		res.ok ||
+		(config?.acceptStatuses && config.acceptStatuses.includes(status));
+	if (!accepted) {
+		if (status === 401)
+			return { valid: false, error: "Token invalid or revoked", soft: false };
+		if (status === 403)
+			return { valid: false, error: "Access denied", soft: false };
+		return { valid: false, error: `API returned ${status}`, soft: false };
+	}
 
-  // Soft success only when the provider configured an explicit message for this
-  // status (e.g. Grok CLI 402 spending-limit). Codex-style acceptStatuses:[400]
-  // stays silent success — 400 there only proves auth, not a user-facing warning.
-  if (!res.ok && config?.acceptStatuses?.includes(status)) {
-    const softMap = config.softFailMessage || {};
-    if (softMap[status]) {
-      return { valid: true, error: softMap[status], soft: true };
-    }
-    return { valid: true, error: null, soft: false };
-  }
+	// Soft success only when the provider configured an explicit message for this
+	// status (e.g. Grok CLI 402 spending-limit). Codex-style acceptStatuses:[400]
+	// stays silent success — 400 there only proves auth, not a user-facing warning.
+	if (!res.ok && config?.acceptStatuses?.includes(status)) {
+		const softMap = config.softFailMessage || {};
+		if (softMap[status]) {
+			return { valid: true, error: softMap[status], soft: true };
+		}
+		return { valid: true, error: null, soft: false };
+	}
 
-  return { valid: true, error: null, soft: false };
+	return { valid: true, error: null, soft: false };
 }
 
 async function probeClineAccessToken(accessToken) {
@@ -264,7 +286,7 @@ async function refreshOAuthToken(connection) {
 		}
 
 		if (provider === "codex" || provider === "grok-cli" || provider === "xai") {
-		return await refreshProviderCredentials(provider, connection, console);
+			return await refreshProviderCredentials(provider, connection, console);
 		}
 
 		if (provider === "claude") {
@@ -522,57 +544,88 @@ async function testOAuthConnection(connection, effectiveProxy = null) {
 		return await tryProbe(accessToken);
 	}
 
-  try {
-    const testUrl = config.buildUrl ? config.buildUrl(accessToken) : config.url;
-    const headers = config.noAuth
-      ? { ...config.extraHeaders }
-      : { [config.authHeader]: `${config.authPrefix}${accessToken}`, ...config.extraHeaders };
-    const fetchOpts = { method: config.method, headers };
-    if (config.body) fetchOpts.body = config.body;
-    const res = await fetchWithConnectionProxy(testUrl, fetchOpts, effectiveProxy);
-    const bodyText = !res.ok ? await res.text().catch(() => "") : "";
+	try {
+		const testUrl = config.buildUrl ? config.buildUrl(accessToken) : config.url;
+		const headers = config.noAuth
+			? { ...config.extraHeaders }
+			: {
+					[config.authHeader]: `${config.authPrefix}${accessToken}`,
+					...config.extraHeaders,
+				};
+		const fetchOpts = { method: config.method, headers };
+		if (config.body) fetchOpts.body = config.body;
+		const res = await fetchWithConnectionProxy(
+			testUrl,
+			fetchOpts,
+			effectiveProxy,
+		);
+		const bodyText = !res.ok ? await res.text().catch(() => "") : "";
 
-    const classified = classifyOAuthProbeResult(res, config, bodyText);
-    if (classified.valid) {
-      return {
-        valid: true,
-        // soft success surfaces warning text without marking connection error
-        error: classified.soft ? classified.error : null,
-        warning: classified.soft ? classified.error : null,
-        refreshed,
-        newTokens,
-      };
-    }
+		const classified = classifyOAuthProbeResult(res, config, bodyText);
+		if (classified.valid) {
+			return {
+				valid: true,
+				// soft success surfaces warning text without marking connection error
+				error: classified.soft ? classified.error : null,
+				warning: classified.soft ? classified.error : null,
+				refreshed,
+				newTokens,
+			};
+		}
 
-    if (res.status === 401 && config.refreshable && !refreshed && connection.refreshToken) {
-      const tokens = await refreshOAuthToken(connection);
-      if (tokens) {
-        const retryUrl = config.buildUrl ? config.buildUrl(tokens.accessToken) : testUrl;
-        const retryHeaders = config.noAuth
-          ? { ...config.extraHeaders }
-          : { [config.authHeader]: `${config.authPrefix}${tokens.accessToken}`, ...config.extraHeaders };
-        const retryOpts = { method: config.method, headers: retryHeaders };
-        if (config.body) retryOpts.body = config.body;
-        const retryRes = await fetchWithConnectionProxy(retryUrl, retryOpts, effectiveProxy);
-        const retryBody = !retryRes.ok ? await retryRes.text().catch(() => "") : "";
-        const retryClassified = classifyOAuthProbeResult(retryRes, config, retryBody);
-        if (retryClassified.valid) {
-          return {
-            valid: true,
-            error: retryClassified.soft ? retryClassified.error : null,
-            warning: retryClassified.soft ? retryClassified.error : null,
-            refreshed: true,
-            newTokens: tokens,
-          };
-        }
-      }
-      return { valid: false, error: "Token invalid or revoked", refreshed: false };
-    }
+		if (
+			res.status === 401 &&
+			config.refreshable &&
+			!refreshed &&
+			connection.refreshToken
+		) {
+			const tokens = await refreshOAuthToken(connection);
+			if (tokens) {
+				const retryUrl = config.buildUrl
+					? config.buildUrl(tokens.accessToken)
+					: testUrl;
+				const retryHeaders = config.noAuth
+					? { ...config.extraHeaders }
+					: {
+							[config.authHeader]: `${config.authPrefix}${tokens.accessToken}`,
+							...config.extraHeaders,
+						};
+				const retryOpts = { method: config.method, headers: retryHeaders };
+				if (config.body) retryOpts.body = config.body;
+				const retryRes = await fetchWithConnectionProxy(
+					retryUrl,
+					retryOpts,
+					effectiveProxy,
+				);
+				const retryBody = !retryRes.ok
+					? await retryRes.text().catch(() => "")
+					: "";
+				const retryClassified = classifyOAuthProbeResult(
+					retryRes,
+					config,
+					retryBody,
+				);
+				if (retryClassified.valid) {
+					return {
+						valid: true,
+						error: retryClassified.soft ? retryClassified.error : null,
+						warning: retryClassified.soft ? retryClassified.error : null,
+						refreshed: true,
+						newTokens: tokens,
+					};
+				}
+			}
+			return {
+				valid: false,
+				error: "Token invalid or revoked",
+				refreshed: false,
+			};
+		}
 
-    return { valid: false, error: classified.error, refreshed };
-  } catch (err) {
-    return { valid: false, error: err.message, refreshed };
-  }
+		return { valid: false, error: classified.error, refreshed };
+	} catch (err) {
+		return { valid: false, error: err.message, refreshed };
+	}
 }
 
 async function fetchWithConnectionProxy(
@@ -969,12 +1022,15 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
 				return { valid, error: valid ? null : "Invalid API key" };
 			}
 			case "alicode":
-			case "alicode-intl": {
-				// Aliyun Coding Plan uses OpenAI-compatible API
+			case "alicode-intl":
+			case "alims-intl": {
+				// Aliyun Coding Plan uses OpenAI-compatible API; alims-intl uses Model Studio compatible-mode
 				const aliBaseUrl =
 					connection.provider === "alicode-intl"
 						? "https://coding-intl.dashscope.aliyuncs.com/v1/chat/completions"
-						: "https://coding.dashscope.aliyuncs.com/v1/chat/completions";
+						: connection.provider === "alims-intl"
+							? "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+							: "https://coding.dashscope.aliyuncs.com/v1/chat/completions";
 				const res = await fetchWithConnectionProxy(
 					aliBaseUrl,
 					{
@@ -1362,12 +1418,12 @@ export async function testSingleConnection(id) {
 	const softWarning = result.valid && (result.warning || result.error);
 	const updateData = {
 		testStatus: result.valid ? "active" : "error",
-		lastError: result.valid ? (softWarning || null) : result.error,
+		lastError: result.valid ? softWarning || null : result.error,
 		lastErrorAt: result.valid
-		? softWarning
-			? new Date().toISOString()
-			: null
-		: new Date().toISOString(),
+			? softWarning
+				? new Date().toISOString()
+				: null
+			: new Date().toISOString(),
 	};
 
 	if (result.refreshed && result.newTokens) {
