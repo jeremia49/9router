@@ -15,7 +15,8 @@ import {
   KIRO_AGENTIC_SYSTEM_PROMPT,
   resolveDefaultProfileArn,
   buildKiroAdditionalModelRequestFieldsForModel,
-  usesKiroNativeGptEffort
+  usesKiroNativeGptEffort,
+  isKiroClaudeModel
 } from "../../config/kiroConstants.js";
 import { parseDataUri } from "../concerns/image.js";
 import { DEFAULT_IMAGE_MIME } from "../schema/index.js";
@@ -419,6 +420,10 @@ export function openaiToKiroRequest(model, body, stream, credentials) {
   if (profileArn) {
     payload.profileArn = profileArn;
   }
+  // Claude rejects the top-level systemPrompt field (400 REQUEST_BODY_INVALID);
+  // its system text already rides in the user-content prefix. Other Kiro models
+  // (GPT-5.6, etc.) keep systemPrompt as Kiro CLI/KAS sends it.
+  if (systemPrompt && !isKiroClaudeModel(upstreamModel)) payload.systemPrompt = systemPrompt;
   if (additionalModelRequestFields) {
     payload.additionalModelRequestFields = additionalModelRequestFields;
   }

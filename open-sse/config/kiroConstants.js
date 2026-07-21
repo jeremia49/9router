@@ -322,6 +322,22 @@ export function supportsKiroAdditionalModelRequestFields(model) {
   return resolveKiroEffortPath(model) !== null;
 }
 
+/**
+ * Detect a Claude model routed through Kiro. CodeWhisperer rejects the
+ * top-level `systemPrompt` field for Claude with 400 REQUEST_BODY_INVALID
+ * (confirmed by live probe: every variant carrying top-level systemPrompt →
+ * 400, every variant without it → 200, including agent fields +
+ * additionalModelRequestFields). Claude system text therefore rides in the
+ * user-content prefix instead. GPT-5.6 and other Kiro models keep systemPrompt.
+ *
+ * @param {string} model upstream model id (agentic/thinking suffix stripped ok)
+ * @returns {boolean}
+ */
+export function isKiroClaudeModel(model) {
+  if (typeof model !== "string") return false;
+  return model.toLowerCase().replace(/-/g, ".").includes("claude");
+}
+
 export function usesKiroNativeGptEffort(body, model) {
   return resolveKiroEffortPath(model) === "reasoning"
     && extractKiroGptEffortLevel(body) !== null;

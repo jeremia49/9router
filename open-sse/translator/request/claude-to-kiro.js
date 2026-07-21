@@ -28,6 +28,7 @@ import {
   resolveDefaultProfileArn,
   buildKiroAdditionalModelRequestFieldsForModel,
   usesKiroNativeGptEffort,
+  isKiroClaudeModel,
 } from "../../config/kiroConstants.js";
 import { DEFAULT_IMAGE_MIME } from "../schema/index.js";
 import { ROLE, CLAUDE_BLOCK } from "../schema/index.js";
@@ -254,9 +255,9 @@ export function claudeToKiroRequest(model, body, stream, credentials) {
     ? (credentials?.providerSpecificData?.profileArn || "")
     : (credentials?.providerSpecificData?.profileArn || resolveDefaultProfileArn(authMethod));
 
-  // The system prompt travels inside the first user turn's content (contentPrefix):
-  // the CodeWhisperer surface rejects a top-level `systemPrompt` with
-  // 400 REQUEST_BODY_INVALID, so the value below is only a replay cache key.
+  // Kiro CLI/KAS sends system prompt as top-level `systemPrompt`. Keep a
+  // content fallback too because the CodeWhisperer surface does not always
+  // enforce top-level systemPrompt for direct calls.
   const timestamp = new Date().toISOString();
   const systemPromptParts = [];
   if (thinkingBudget !== null && !usesNativeGptEffort) {
@@ -336,6 +337,10 @@ export function claudeToKiroRequest(model, body, stream, credentials) {
   };
 
   if (profileArn) payload.profileArn = profileArn;
+  // Claude rejects the top-level systemPrompt field (400 REQUEST_BODY_INVALID);
+  // its system text already rides in the user-content prefix. Other Kiro models
+  // (GPT-5.6, etc.) keep systemPrompt as Kiro CLI/KAS sends it.
+  if (systemPrompt && !isKiroClaudeModel(upstreamModel)) payload.systemPrompt = systemPrompt;
   if (additionalModelRequestFields) {
     payload.additionalModelRequestFields = additionalModelRequestFields;
   }
