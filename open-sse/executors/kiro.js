@@ -400,7 +400,19 @@ export class KiroExecutor extends BaseExecutor {
     await this.ensureKiroProfileArn(args);
     const result = await super.execute(args);
     if (result?.response?.ok) {
-      result.response = this.transformEventStreamToSSE(result.response, args.model);
+      // Streaming clients get incremental SSE: transform each EventStream
+      // frame straight through to the client as it arrives. The integrity
+      // gate (buffer-until-EOF + bounded repair retry) is fundamentally
+      // incompatible with streaming — you cannot retry after bytes have
+      // already been forwarded — so it only runs for non-streaming clients,
+      // whose responses are re-aggregated into JSON downstream anyway.
+      // Framing/CRC/error-frame validation still runs inline in
+      // transformEventStreamToSSE via fail() for both paths.
+      if (args.stream) {
+        result.response = this.transformEventStreamToSSE(result.response, args.model);
+      } else {
+        this.attachIntegrityGate(result, args);
+      }
     }
     return result;
   }
