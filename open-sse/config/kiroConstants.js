@@ -132,6 +132,19 @@ export function resolveKiroThinkingBudget(body, headers, model) {
   return null;
 }
 
+export function extractKiroEffortLevel(body) {
+  const effort =
+    body?.output_config?.effort ??
+    body?.reasoning_effort ??
+    (typeof body?.reasoning === "object" ? body.reasoning?.effort : null);
+  if (typeof effort !== "string") return null;
+  const normalized = effort.toLowerCase();
+  if (normalized === "none" || normalized === "off" || normalized === "disabled") return null;
+  if (normalized === "xhigh" || normalized === "max") return "high";
+  if (["low", "medium", "high"].includes(normalized)) return normalized;
+  return null;
+}
+
 function extractKiroGptEffortLevel(body) {
   const effort =
     body?.output_config?.effort ??
@@ -147,47 +160,72 @@ function extractKiroGptEffortLevel(body) {
   return null;
 }
 
-export function buildKiroAdditionalModelRequestFields(body) {
-  const effort = extractKiroGptEffortLevel(body);
+export function buildKiroAdditionalModelRequestFields(body, effortPath = "output_config") {
+  const effort = effortPath === "reasoning"
+    ? extractKiroGptEffortLevel(body)
+    : extractKiroEffortLevel(body);
   if (!effort) return undefined;
-  // Mirrors Kiro CLI/KAS buildEffortRequestFields("reasoning") for GPT.
-  return { reasoning: { effort } };
+  if (effortPath === "reasoning") {
+    // Mirrors Kiro CLI/KAS buildEffortRequestFields("reasoning") for GPT.
+    return { reasoning: { effort } };
+  }
+  // Mirrors Kiro CLI/KAS buildEffortRequestFields("output_config").
+  return {
+    thinking: { type: "adaptive", display: "summarized" },
+    output_config: { effort },
+  };
+}
+
+export function resolveKiroEffortPath(model) {
+  if (typeof model !== "string") return null;
+  const normalized = model.toLowerCase().replace(/-/g, ".");
+  if (/(?:^|[/.])gpt[/.]5[/.]6(?:[/.]|$)/.test(normalized)) {
+    return "reasoning";
+  }
+  if (!normalized.includes("claude")) return null;
+  const match = normalized.match(/(?:^|[/.])claude(?:[/.][a-z]+)*[/.](\d+)(?:[/.](\d+))?(?:[/.]|$)/);
+  if (!match) return null;
+  const [, majorText, minorText] = match;
+  const major = Number(majorText);
+  const minor = minorText === undefined ? null : Number(minorText);
+  const dateSuffixMinor = minor !== null && minor >= 1000;
+  // Kiro rejected additionalModelRequestFields on legacy 4.5 models in live smoke.
+  // Default future Claude/Kiro models to supported so new model releases do not
+  // need a code allowlist update.
+  return major < 4 || (major === 4 && (minor === null || minor <= 5 || dateSuffixMinor))
+    ? null
+    : "output_config";
+}
+
+export function supportsKiroAdditionalModelRequestFields(model) {
+  return resolveKiroEffortPath(model) !== null;
 }
 
 /**
- * Detect a GPT-5.6 model routed through Kiro. Only these use Kiro's native
- * `additionalModelRequestFields.reasoning.effort`. Claude models never do —
- * see isKiroLegacyClaudeModel.
- *
- * @param {string} model upstream model id
- * @returns {boolean}
- */
-export function isKiroGptEffortModel(model) {
-  if (typeof model !== "string") return false;
-  return /(?:^|[/.])gpt[/.]5[/.]6(?:[/.]|$)/.test(model.toLowerCase().replace(/-/g, "."));
-}
-
-/**
- * Detect a Claude model routed through Kiro. These reject the reshaped
- * agent-style payload (top-level systemPrompt, agentContinuationId,
- * agentTaskType/agentMode, additionalModelRequestFields), so they use the
- * baseline single-message payload with thinking injected into user content.
+ * Detect a Claude model routed through Kiro. CodeWhisperer rejects the
+ * top-level `systemPrompt` field for Claude with 400 REQUEST_BODY_INVALID
+ * (confirmed by live probe: every variant carrying top-level systemPrompt →
+ * 400, every variant without it → 200, including agent fields +
+ * additionalModelRequestFields). Claude system text therefore rides in the
+ * user-content prefix instead. GPT-5.6 and other Kiro models keep systemPrompt.
  *
  * @param {string} model upstream model id (agentic/thinking suffix stripped ok)
  * @returns {boolean}
  */
-export function isKiroLegacyClaudeModel(model) {
+export function isKiroClaudeModel(model) {
   if (typeof model !== "string") return false;
   return model.toLowerCase().replace(/-/g, ".").includes("claude");
 }
 
 export function usesKiroNativeGptEffort(body, model) {
-  return isKiroGptEffortModel(model) && extractKiroGptEffortLevel(body) !== null;
+  return resolveKiroEffortPath(model) === "reasoning"
+    && extractKiroGptEffortLevel(body) !== null;
 }
 
 export function buildKiroAdditionalModelRequestFieldsForModel(body, model) {
-  if (!isKiroGptEffortModel(model)) return undefined;
-  return buildKiroAdditionalModelRequestFields(body);
+  const effortPath = resolveKiroEffortPath(model);
+  if (!effortPath) return undefined;
+  return buildKiroAdditionalModelRequestFields(body, effortPath);
 }
 
 /**
