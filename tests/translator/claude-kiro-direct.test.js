@@ -27,13 +27,13 @@ describe("Claude → Kiro (direct route)", () => {
     expect(out.conversationState.currentMessage.userInputMessage.content).toContain("hello");
   });
 
-  it("keeps conversationId stable from client session headers and replays frozen msg0", () => {
+  it("keeps conversationId stable from client session headers and replays frozen msg0 (agent-path models)", () => {
     const credentials = {
       rawHeaders: { "x-session-id": "hermes-session-123-claude-replay" },
       connectionId: "kiro-account-1",
     };
-    const first = C2K({ messages: [{ role: "user", content: "first" }] }, credentials);
-    const second = C2K({ messages: [{ role: "user", content: "second" }] }, credentials);
+    const first = C2K({ messages: [{ role: "user", content: "first" }] }, credentials, "gpt-4o");
+    const second = C2K({ messages: [{ role: "user", content: "second" }] }, credentials, "gpt-4o");
 
     expect(first.conversationState.conversationId).toBe("hermes-session-123-claude-replay");
     expect(second.conversationState.conversationId).toBe("hermes-session-123-claude-replay");
@@ -42,7 +42,7 @@ describe("Claude → Kiro (direct route)", () => {
     expect(second.conversationState.history[0].userInputMessage.content).toBe(
       first.conversationState.currentMessage.userInputMessage.content
     );
-    expect(second.conversationState.history[0].userInputMessage.modelId).toBe("claude-sonnet-4.5");
+    expect(second.conversationState.history[0].userInputMessage.modelId).toBe("gpt-4o");
     expect(second.conversationState.currentMessage.userInputMessage.content).toContain("Current time");
     expect(second.conversationState.currentMessage.userInputMessage.content).toContain("second");
   });
@@ -81,7 +81,7 @@ describe("Claude → Kiro (direct route)", () => {
     expect(cur.userInputMessageContext?.toolResults?.length ?? 0).toBe(0);
   });
 
-  it("injects thinking_mode tag when model implies thinking", () => {
+  it("injects thinking_mode tag into user content when Claude model implies thinking", () => {
     const out = translateRequest(
       FORMATS.CLAUDE,
       FORMATS.KIRO,
@@ -95,9 +95,10 @@ describe("Claude → Kiro (direct route)", () => {
       "<thinking_mode>enabled</thinking_mode>"
     );
     expect(out).not.toHaveProperty("agentMode");
+    expect(out.systemPrompt).toBeUndefined();
   });
 
-  it("does not send additionalModelRequestFields for Kiro models without effort support", () => {
+  it("injects Claude thinking budget into user content, never additionalModelRequestFields", () => {
     const out = C2K({
       output_config: { effort: "high" },
       messages: [{ role: "user", content: "think with adaptive effort" }],
@@ -106,6 +107,7 @@ describe("Claude → Kiro (direct route)", () => {
     expect(out.additionalModelRequestFields).toBeUndefined();
     expect(out.thinking).toBeUndefined();
     expect(kiroPromptOf(out)).toContain("<max_thinking_length>24576</max_thinking_length>");
+    expect(out.systemPrompt).toBeUndefined();
   });
 
   it("normalizes an unsupported Kiro intensity suffix while preserving agentic behavior", () => {
@@ -120,7 +122,7 @@ describe("Claude → Kiro (direct route)", () => {
     expect(kiroPromptOf(out)).toContain("CHUNKED WRITE PROTOCOL");
   });
 
-  it("maps output_config.effort high to Kiro CLI-style additionalModelRequestFields for effort models", () => {
+  it("keeps future Claude model ids on the baseline content path without adaptive fields", () => {
     const out = C2K({
       output_config: { effort: "high" },
       messages: [{ role: "user", content: "think with adaptive effort" }],
@@ -132,6 +134,7 @@ describe("Claude → Kiro (direct route)", () => {
     });
     expect(out.thinking).toBeUndefined();
     expect(kiroPromptOf(out)).toContain("<max_thinking_length>24576</max_thinking_length>");
+    expect(out.systemPrompt).toBeUndefined();
   });
 
   it("maps Claude-format effort to GPT-5.6 reasoning fields without legacy prompt tags", () => {
@@ -202,11 +205,11 @@ describe("Claude → Kiro (direct route)", () => {
     const first = C2K({
       system: "stable instruction",
       messages: [{ role: "user", content: "first" }],
-    });
+    }, null, "gpt-4o");
     const second = C2K({
       system: "stable instruction",
       messages: [{ role: "user", content: "second" }],
-    });
+    }, null, "gpt-4o");
 
     expect(kiroPromptOf(first)).toBe("stable instruction");
     expect(kiroPromptOf(first)).toBe(kiroPromptOf(second));
