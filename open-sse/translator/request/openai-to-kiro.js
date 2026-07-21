@@ -6,7 +6,7 @@ import { register } from "../index.js";
 import { FORMATS } from "../formats.js";
 import { v4 as uuidv4 } from "uuid";
 import { applyKiroSessionReplay } from "../../utils/kiroSessionReplay.js";
-import { resolveContinuationId, resolveSessionIdentity } from "../../utils/sessionManager.js";
+import { resolveContinuationId, resolveSessionIdentity, resolveSessionId } from "../../utils/sessionManager.js";
 import {
   resolveKiroModel,
   resolveKiroThinkingBudget,
@@ -14,7 +14,8 @@ import {
   KIRO_AGENTIC_SYSTEM_PROMPT,
   resolveDefaultProfileArn,
   buildKiroAdditionalModelRequestFieldsForModel,
-  usesKiroNativeGptEffort
+  usesKiroNativeGptEffort,
+  isKiroLegacyClaudeModel
 } from "../../config/kiroConstants.js";
 import { parseDataUri } from "../concerns/image.js";
 import { DEFAULT_IMAGE_MIME } from "../schema/index.js";
@@ -548,6 +549,63 @@ export function openaiToKiroRequest(model, body, stream, credentials) {
   const profileArn = accountBoundAuth
     ? (credentials?.providerSpecificData?.profileArn || "")
     : (credentials?.providerSpecificData?.profileArn || resolveDefaultProfileArn(authMethod));
+
+  // Claude via Kiro: use the baseline single-message payload. The reshaped
+  // agent-style payload (top-level systemPrompt, agentContinuationId,
+  // agentTaskType/agentMode, additionalModelRequestFields) makes CodeWhisperer
+  // reject Claude requests with 400 REQUEST_BODY_INVALID. Thinking is injected
+  // as a <thinking_mode> tag into user content, exactly as it worked before.
+  if (isKiroLegacyClaudeModel(upstreamModel)) {
+    const baselineTimestamp = new Date().toISOString();
+    const prefixParts = [];
+    if (thinkingBudget !== null) {
+      prefixParts.push(buildThinkingSystemPrefix(thinkingBudget));
+    }
+    prefixParts.push(`[Context: Current time is ${baselineTimestamp}]`);
+    if (agentic) {
+      prefixParts.push(KIRO_AGENTIC_SYSTEM_PROMPT);
+    }
+    const baseCurrent = currentMessage?.userInputMessage || {};
+    const finalContent = `${prefixParts.join("\n\n")}\n\n${baseCurrent.content || ""}`;
+
+    const claudePayload = {
+      conversationState: {
+        chatTriggerType: "MANUAL",
+        conversationId: resolveSessionId({ headers: credentials?.rawHeaders, body, connectionId: credentials?.connectionId, scope: "kiro" }),
+        currentMessage: {
+          userInputMessage: {
+            content: finalContent,
+            modelId: upstreamModel,
+            origin: "AI_EDITOR",
+            ...(baseCurrent.images?.length > 0 && {
+              images: baseCurrent.images
+            }),
+            ...(baseCurrent.userInputMessageContext && {
+              userInputMessageContext: baseCurrent.userInputMessageContext
+            })
+          }
+        },
+        history
+      }
+    };
+
+    if (profileArn) {
+      claudePayload.profileArn = profileArn;
+    }
+    if (maxTokens || temperature !== undefined || topP !== undefined) {
+      claudePayload.inferenceConfig = {};
+      if (maxTokens) claudePayload.inferenceConfig.maxTokens = maxTokens;
+      if (temperature !== undefined) claudePayload.inferenceConfig.temperature = temperature;
+      if (topP !== undefined) claudePayload.inferenceConfig.topP = topP;
+    }
+
+    Object.defineProperty(claudePayload, "_kiroUpstreamModel", {
+      value: upstreamModel,
+      enumerable: false
+    });
+
+    return claudePayload;
+  }
 
   const timestamp = new Date().toISOString();
 
