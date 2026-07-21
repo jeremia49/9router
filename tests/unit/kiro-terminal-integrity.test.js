@@ -116,7 +116,10 @@ async function execute(executor = new KiroExecutor(), overrides = {}) {
   return executor.execute({
     model: "kr/claude-opus-4.8",
     body: { systemPrompt: "base", conversationState: {} },
-    stream: true,
+    // Integrity recovery (buffer-until-EOF + bounded repair retry) is the
+    // non-streaming path. Streaming clients bypass the gate for incremental
+    // SSE, so these gate assertions run with stream:false.
+    stream: false,
     credentials,
     ...overrides
   });
@@ -774,5 +777,54 @@ describe("Kiro terminal integrity recovery", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(body).toContain("kiro_integrity_buffer_exceeded");
     expect(body).not.toContain('"name":"read_file"');
+  });
+});
+
+describe("Kiro streaming pass-through", () => {
+  it("forwards each frame incrementally without buffering until EOF", async () => {
+    const upstream = controlledResponse([
+      frame("assistantResponseEvent", { content: "first" })
+    ]);
+    fetchMock.mockResolvedValueOnce(upstream.value);
+
+    const result = await execute(new KiroExecutor(), { stream: true });
+    const reader = result.response.body.getReader();
+    const decoder = new TextDecoder();
+
+    // The first frame is available to the client before the stream ends —
+    // the gate's buffer-until-EOF hold no longer applies to streaming.
+    const firstChunk = decoder.decode((await reader.read()).value);
+    expect(firstChunk).toContain("first");
+
+    // A later frame pushed after the client already read output is forwarded
+    // on its own read, proving frames are not withheld until completion.
+    upstream.enqueue(frame("assistantResponseEvent", { content: "second" }));
+    const secondChunk = decoder.decode((await reader.read()).value);
+    expect(secondChunk).toContain("second");
+
+    upstream.enqueue(frame("messageStopEvent", {}));
+    upstream.close();
+
+    let rest = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      rest += decoder.decode(value, { stream: true });
+    }
+    expect(rest).toContain("[DONE]");
+  });
+
+  it("does not emit the integrity-gate heartbeat when streaming", async () => {
+    fetchMock.mockResolvedValueOnce(response([
+      frame("assistantResponseEvent", { content: "answer" }),
+      frame("messageStopEvent", {})
+    ]));
+
+    const body = await (await execute(new KiroExecutor(), { stream: true })).response.text();
+
+    expect(body).toContain("answer");
+    expect(body).toContain("[DONE]");
+    expect(body).not.toContain(": kiro-validation");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
