@@ -280,14 +280,27 @@ const nodeTypes = { provider: ProviderNode, router: RouterNode };
 const edgeTypes = { topology: TopologyEdge };
 
 // Place N nodes evenly along an ellipse around the router center.
-function buildLayout(providers, activeSet, lastSet, errorSet) {
+function buildLayout(providers, activeMap, lastSet, errorSet) {
   const nodeW = 180;
   const nodeH = 30;
   const routerW = 120;
   const routerH = 44;
   const nodeGap = 24;
 
-  const count = providers.length;
+  // Only draw connections that have an in-flight request. Each active request
+  // gets its own slot, so 3 concurrent Kiro requests => 3 lines. Idle
+  // connections (0 active requests) are hidden entirely.
+  const slots = [];
+  providers.forEach((p) => {
+    const connKey = p.connectionId || p.provider?.toLowerCase();
+    const activeCount = activeMap.get(connKey) || 0;
+    for (let k = 0; k < activeCount; k++) {
+      slots.push({ p, connKey, active: true, copy: k });
+    }
+  });
+
+  const totalActive = Array.from(activeMap.values()).reduce((a, b) => a + b, 0);
+  const count = slots.length;
 
   // Compute rx so arc spacing between nodes >= nodeW + nodeGap
   const minRx = ((nodeW + nodeGap) * count) / (2 * Math.PI);
@@ -307,7 +320,7 @@ function buildLayout(providers, activeSet, lastSet, errorSet) {
     id: "router",
     type: "router",
     position: { x: -routerW / 2, y: -routerH / 2 },
-    data: { activeCount: activeSet.size },
+    data: { activeCount: totalActive },
     draggable: false,
   });
 
@@ -318,15 +331,14 @@ function buildLayout(providers, activeSet, lastSet, errorSet) {
     return { stroke: "var(--color-border)", strokeWidth: 1, opacity: 0.3 };
   };
 
-  providers.forEach((p, i) => {
+  slots.forEach((slot, i) => {
+    const p = slot.p;
     const config = getProviderConfig(p.provider);
-    // One node per connection: match active/last/error per connection id when
-    // available, falling back to provider name for noAuth/free providers.
-    const connKey = p.connectionId || p.provider?.toLowerCase();
-    const active = activeSet.has(connKey);
+    // active/last/error resolved per slot; last/error still match by provider name
+    const active = slot.active;
     const last = !active && lastSet.has(p.provider?.toLowerCase());
     const error = !active && errorSet.has(p.provider?.toLowerCase());
-    const nodeId = `provider-${connKey}`;
+    const nodeId = `provider-${slot.connKey}-${slot.copy}`;
     const data = {
       label: (config.name !== p.provider ? config.name : null) || p.nodeName || p.name || p.provider,
       color: config.color || "#6b7280",
@@ -380,13 +392,33 @@ function buildLayout(providers, activeSet, lastSet, errorSet) {
 export default function ProviderTopology({ providers = [], activeRequests = [], lastProvider = "", errorProvider = "" }) {
   // Serialize to stable string keys so useMemo only re-runs when values actually change
   const activeKey = useMemo(
-    () => activeRequests.map((r) => r.connectionId || r.provider?.toLowerCase()).filter(Boolean).sort().join(","),
+    () =>
+      activeRequests
+        .map((r) => {
+          const k = r.connectionId || r.provider?.toLowerCase();
+          return k ? `${k}:${r.count || 1}` : null;
+        })
+        .filter(Boolean)
+        .sort()
+        .join(","),
     [activeRequests]
   );
   const lastKey = lastProvider?.toLowerCase() || "";
   const errorKey = errorProvider?.toLowerCase() || "";
 
-  const rawActiveSet = useMemo(() => new Set(activeKey ? activeKey.split(",") : []), [activeKey]);
+  // connKey -> in-flight request count
+  const rawActiveMap = useMemo(() => {
+    const m = new Map();
+    if (activeKey) {
+      for (const part of activeKey.split(",")) {
+        const idx = part.lastIndexOf(":");
+        const key = part.slice(0, idx);
+        const cnt = Number(part.slice(idx + 1)) || 1;
+        m.set(key, (m.get(key) || 0) + cnt);
+      }
+    }
+    return m;
+  }, [activeKey]);
   const lastSet = useMemo(() => new Set(lastKey ? [lastKey] : []), [lastKey]);
   const errorSet = useMemo(() => new Set(errorKey ? [errorKey] : []), [errorKey]);
 
@@ -397,33 +429,33 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
   useEffect(() => {
     const seen = firstSeenRef.current;
     const now = Date.now();
-    for (const p of rawActiveSet) {
+    for (const p of rawActiveMap.keys()) {
       if (!seen[p]) seen[p] = now;
     }
     for (const p of Object.keys(seen)) {
-      if (!rawActiveSet.has(p)) delete seen[p];
+      if (!rawActiveMap.has(p)) delete seen[p];
     }
-  }, [rawActiveSet]);
+  }, [rawActiveMap]);
 
   useEffect(() => {
-    if (rawActiveSet.size === 0) return;
+    if (rawActiveMap.size === 0) return;
     const id = setInterval(() => setTick((t) => t + 1), FE_ACTIVE_TICK_MS);
     return () => clearInterval(id);
-  }, [rawActiveSet]);
+  }, [rawActiveMap]);
 
-  const activeSet = useMemo(() => {
+  const activeMap = useMemo(() => {
     const now = Date.now();
-    const filtered = new Set();
-    for (const p of rawActiveSet) {
+    const filtered = new Map();
+    for (const [p, cnt] of rawActiveMap) {
       const ts = firstSeenRef.current[p];
-      if (!ts || now - ts < FE_ACTIVE_TIMEOUT_MS) filtered.add(p);
+      if (!ts || now - ts < FE_ACTIVE_TIMEOUT_MS) filtered.set(p, cnt);
     }
     return filtered;
-  }, [rawActiveSet, tick]);
+  }, [rawActiveMap, tick]);
 
   const { nodes, edges } = useMemo(
-    () => buildLayout(providers, activeSet, lastSet, errorSet),
-    [providers, activeSet, lastSet, errorSet]
+    () => buildLayout(providers, activeMap, lastSet, errorSet),
+    [providers, activeMap, lastSet, errorSet]
   );
 
   // Stable key — only remount when provider list changes
