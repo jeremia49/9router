@@ -219,8 +219,11 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const period = periodProp ?? periodLocal;
   const setPeriod = setPeriodProp ?? setPeriodLocal;
 
-  // Fetch connected providers once, deduplicate by provider type
-  // Always include noAuth free providers (e.g. opencode) regardless of connections
+  // Fetch connected providers once. Keep every connection as its own node so the
+  // topology draws one line per connection (e.g. 3 Kiro connections => 3 lines).
+  // noAuth free providers (e.g. opencode) are NOT shown here — they only appear
+  // in the topology while actively in use (derived from activeRequests below).
+  const [noAuthDefs, setNoAuthDefs] = useState([]);
   useEffect(() => {
     Promise.all([
       fetch("/api/providers").then((r) => r.ok ? r.json() : null),
@@ -232,21 +235,21 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         for (const node of (nodesData?.nodes || [])) {
           nodeNameMap[node.id] = node.name;
         }
-        const seen = new Set();
-        const unique = (d?.connections || []).filter((c) => {
+        const all = (d?.connections || []).filter((c) => {
           if (c.isActive === false) return false;
           if (!isLLMProvider(c.provider)) return false;
-          if (seen.has(c.provider)) return false;
-          seen.add(c.provider);
           return true;
         }).map((c) => ({
           ...c,
+          connectionId: c.id,
           nodeName: nodeNameMap[c.provider] || null,
         }));
-        const noAuthProviders = Object.values(FREE_PROVIDERS)
-          .filter((p) => p.noAuth && !seen.has(p.id) && isLLMProvider(p.id))
-          .map((p) => ({ provider: p.id, name: p.name }));
-        setProviders([...unique, ...noAuthProviders]);
+        setProviders(all);
+        setNoAuthDefs(
+          Object.values(FREE_PROVIDERS)
+            .filter((p) => p.noAuth && isLLMProvider(p.id))
+            .map((p) => ({ provider: p.id, name: p.name, connectionId: p.id }))
+        );
       })
       .catch(() => {});
   }, []);
@@ -433,6 +436,21 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
     }
   }, [stats, tableView, sortBy, sortOrder]);
 
+  // Real connections + any noAuth providers currently in use. noAuth providers
+  // are only surfaced while they have an active request in flight.
+  const topologyProviders = useMemo(() => {
+    const activeReqs = stats?.activeRequests || [];
+    if (!noAuthDefs.length || !activeReqs.length) return providers;
+    const activeProviderIds = new Set(
+      activeReqs.map((r) => r.provider?.toLowerCase()).filter(Boolean)
+    );
+    const shownProviders = new Set(providers.map((p) => p.provider?.toLowerCase()));
+    const activeNoAuth = noAuthDefs.filter(
+      (p) => activeProviderIds.has(p.provider?.toLowerCase()) && !shownProviders.has(p.provider?.toLowerCase())
+    );
+    return activeNoAuth.length ? [...providers, ...activeNoAuth] : providers;
+  }, [providers, noAuthDefs, stats?.activeRequests]);
+
   if (!stats && !loading) return <div className="text-text-muted">Failed to load usage statistics.</div>;
 
   const spinner = (
@@ -471,7 +489,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       {loading ? spinner : (
         <div className="grid min-w-0 grid-cols-1 items-stretch gap-2 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
           <ProviderTopology
-            providers={providers}
+            providers={topologyProviders}
             activeRequests={stats.activeRequests || []}
             lastProvider={stats.recentRequests?.[0]?.provider || ""}
             errorProvider={stats.errorProvider || ""}
