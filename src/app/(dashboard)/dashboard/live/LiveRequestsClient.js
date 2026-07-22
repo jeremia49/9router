@@ -6,7 +6,6 @@ import Button from "@/shared/components/Button";
 import Toggle from "@/shared/components/Toggle";
 import { cn } from "@/shared/utils/cn";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
-import RequestDetailsTab from "@/app/(dashboard)/dashboard/usage/components/RequestDetailsTab";
 
 let providerNameCache = null;
 let providerNodesCache = null;
@@ -324,11 +323,6 @@ export default function LiveRequestsClient() {
             ))}
           </div>
         )}
-      </section>
-
-      <section className="flex min-w-0 flex-col gap-4">
-        <h2 className="text-lg font-semibold text-text-main">History</h2>
-        <RequestDetailsTab />
       </section>
     </div>
   );
