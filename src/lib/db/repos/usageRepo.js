@@ -207,7 +207,7 @@ export async function getActiveRequests() {
         activeRequests.push({
           model: match ? match[1] : modelKey,
           provider: match ? match[2] : "unknown",
-          account: accountName, count,
+          account: accountName, count, connectionId,
         });
       }
     }
@@ -416,7 +416,7 @@ export async function getUsageStats(period = "all") {
         stats.activeRequests.push({
           model: match ? match[1] : modelKey,
           provider: match ? match[2] : "unknown",
-          account: accountName, count,
+          account: accountName, count, connectionId,
         });
       }
     }

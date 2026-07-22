@@ -200,10 +200,10 @@ function TopologyEdge({
         style={{ stroke: "#f8fafc", strokeWidth: 2.2, opacity: 1 }}
         className="topology-edge-kame"
       />
-      {/* Energy orbs */}
+      {/* Energy orbs — forward (9Router → provider), the "sending" direction */}
       {Array.from({ length: KAME_PARTICLE_COUNT }, (_, i) => (
         <circle
-          key={`${id}-p-${i}`}
+          key={`${id}-pf-${i}`}
           r={i % 2 === 0 ? 4 : 2.5}
           fill={i % 3 === 0 ? "#fde047" : i % 3 === 1 ? "#67e8f9" : "#fff"}
           opacity={0.95}
@@ -214,6 +214,26 @@ function TopologyEdge({
             repeatCount="indefinite"
             path={edgePath}
             begin={`${i * 0.09}s`}
+          />
+        </circle>
+      ))}
+      {/* Energy orbs — reverse (provider → 9Router), the "receiving" direction */}
+      {Array.from({ length: KAME_PARTICLE_COUNT }, (_, i) => (
+        <circle
+          key={`${id}-pr-${i}`}
+          r={i % 2 === 0 ? 3.5 : 2}
+          fill={i % 3 === 0 ? "#f472b6" : i % 3 === 1 ? "#a78bfa" : "#fff"}
+          opacity={0.9}
+          style={{ filter: "drop-shadow(0 0 4px #a78bfa)" }}
+        >
+          <animateMotion
+            dur={`${0.45 + i * 0.08}s`}
+            repeatCount="indefinite"
+            path={edgePath}
+            keyPoints="1;0"
+            keyTimes="0;1"
+            calcMode="linear"
+            begin={`${i * 0.1}s`}
           />
         </circle>
       ))}
@@ -300,10 +320,13 @@ function buildLayout(providers, activeSet, lastSet, errorSet) {
 
   providers.forEach((p, i) => {
     const config = getProviderConfig(p.provider);
-    const active = activeSet.has(p.provider?.toLowerCase());
+    // One node per connection: match active/last/error per connection id when
+    // available, falling back to provider name for noAuth/free providers.
+    const connKey = p.connectionId || p.provider?.toLowerCase();
+    const active = activeSet.has(connKey);
     const last = !active && lastSet.has(p.provider?.toLowerCase());
     const error = !active && errorSet.has(p.provider?.toLowerCase());
-    const nodeId = `provider-${p.provider}`;
+    const nodeId = `provider-${connKey}`;
     const data = {
       label: (config.name !== p.provider ? config.name : null) || p.nodeName || p.name || p.provider,
       color: config.color || "#6b7280",
@@ -357,7 +380,7 @@ function buildLayout(providers, activeSet, lastSet, errorSet) {
 export default function ProviderTopology({ providers = [], activeRequests = [], lastProvider = "", errorProvider = "" }) {
   // Serialize to stable string keys so useMemo only re-runs when values actually change
   const activeKey = useMemo(
-    () => activeRequests.map((r) => r.provider?.toLowerCase()).filter(Boolean).sort().join(","),
+    () => activeRequests.map((r) => r.connectionId || r.provider?.toLowerCase()).filter(Boolean).sort().join(","),
     [activeRequests]
   );
   const lastKey = lastProvider?.toLowerCase() || "";
@@ -405,7 +428,7 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
 
   // Stable key — only remount when provider list changes
   const providersKey = useMemo(
-    () => providers.map((p) => p.provider).sort().join(","),
+    () => providers.map((p) => p.connectionId || p.provider).sort().join(","),
     [providers]
   );
 
@@ -474,6 +497,7 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
 ProviderTopology.propTypes = {
   providers: PropTypes.arrayOf(PropTypes.shape({
     id: PropTypes.string,
+    connectionId: PropTypes.string,
     provider: PropTypes.string,
     name: PropTypes.string,
   })),
@@ -481,6 +505,7 @@ ProviderTopology.propTypes = {
     provider: PropTypes.string,
     model: PropTypes.string,
     account: PropTypes.string,
+    connectionId: PropTypes.string,
   })),
   lastProvider: PropTypes.string,
   errorProvider: PropTypes.string,
