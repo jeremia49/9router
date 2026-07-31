@@ -1,6 +1,10 @@
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
-import { resolveKiroModel } from "../config/kiroConstants.js";
+import {
+  KIRO_CODEWHISPERER_TARGET,
+  KIRO_ENDPOINT_FALLBACK_STATUSES,
+  resolveKiroModel,
+} from "../config/kiroConstants.js";
 import { v4 as uuidv4 } from "uuid";
 import { refreshKiroToken } from "../services/tokenRefresh.js";
 import { SSE_DONE, SSE_HEADERS } from "../utils/sseConstants.js";
@@ -274,12 +278,17 @@ export class KiroExecutor extends BaseExecutor {
 		super("kiro", PROVIDERS.kiro);
 	}
 
-	buildHeaders(credentials, stream = true) {
+	buildHeaders(credentials, stream = true, url = "") {
 		const headers = {
 			...this.config.headers,
 			"Amz-Sdk-Request": "attempt=1; max=3",
 			"Amz-Sdk-Invocation-Id": uuidv4(),
 		};
+		if (url.includes("://codewhisperer.")) {
+			headers["X-Amz-Target"] = KIRO_CODEWHISPERER_TARGET;
+		} else {
+			delete headers["X-Amz-Target"];
+		}
 
 		// API-key auth: the key is stored as accessToken and sent as a bearer token
 		// exactly like an OAuth access token, but with an extra `tokentype: API_KEY`
@@ -296,7 +305,7 @@ export class KiroExecutor extends BaseExecutor {
 		if (isApiKey && apiKey) {
 			headers["Authorization"] = `Bearer ${apiKey}`;
 			headers["tokentype"] = "API_KEY";
-		} else if (credentials.accessToken) {
+		} else if (credentials?.accessToken) {
 			headers["Authorization"] = `Bearer ${credentials.accessToken}`;
 			if (isExternalIdp) {
 				headers["TokenType"] = "EXTERNAL_IDP";
@@ -320,11 +329,22 @@ export class KiroExecutor extends BaseExecutor {
 	 * use the CodeWhisperer surface, with the `TokenType: EXTERNAL_IDP` header.
 	 * Other OAuth methods keep the default order (kiro.dev first) since their
 	 * tokens are what that gateway accepts.
+	 *
+	 * Within the amazonaws.com surface, api-key accounts serve on Amazon Q. The
+	 * legacy codewhisperer.* GenerateAssistantResponse endpoint can authenticate
+	 * the key but rejects the same valid payload with REQUEST_BODY_INVALID. Since
+	 * a 400 is terminal in BaseExecutor, putting CodeWhisperer first prevents the
+	 * working q.* endpoint from ever being tried — so keep q.* first for api_key.
 	 */
 	getOrderedBaseUrls(credentials) {
 		const baseUrls = this.getBaseUrls();
 		const psd = credentials?.providerSpecificData || {};
 		const authMethod = psd.authMethod;
+		// IAM Identity Center (idc) tokens are AWS SSO access tokens — the same
+		// family as external_idp/api_key. The kiro.dev gateway rejects them with
+		// 403 "bearer token invalid", so they must hit the CodeWhisperer
+		// *.amazonaws.com surface, and in the region the token was minted in
+		// (the baseUrls are hardcoded us-east-1).
 		const isCodeWhispererSurface =
 			authMethod === "api_key" ||
 			authMethod === "external_idp" ||
@@ -359,12 +379,29 @@ export class KiroExecutor extends BaseExecutor {
 			),
 		];
 		const others = baseUrls.filter((u) => !u.includes("amazonaws.com"));
+		if (authMethod === "api_key") {
+			const q = amazon.filter((u) => u.includes("://q."));
+			if (q.length > 0) {
+				const remaining = amazon.filter((u) => !u.includes("://q."));
+				return [...q, ...remaining, ...others];
+			}
+		}
 		return amazon.length > 0 ? [...amazon, ...others] : baseUrls;
 	}
 
 	buildUrl(model, stream, urlIndex = 0, credentials = null) {
 		const baseUrls = this.getOrderedBaseUrls(credentials);
 		return baseUrls[urlIndex] || baseUrls[0] || this.config.baseUrl;
+	}
+
+	// Retry only endpoint/auth-surface failures. Payload-invalid HTTP 400 must be
+	// terminal: sending the same malformed body to every surface cannot repair it.
+	shouldRetry(status, urlIndex) {
+		const hasFallback = urlIndex + 1 < this.getFallbackCount();
+		return (
+			super.shouldRetry(status, urlIndex) ||
+			(hasFallback && KIRO_ENDPOINT_FALLBACK_STATUSES.has(status))
+		);
 	}
 
 	transformRequest(model, body, stream, credentials) {

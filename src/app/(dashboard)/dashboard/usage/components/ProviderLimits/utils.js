@@ -507,6 +507,36 @@ export function parseQuotaData(provider, data) {
 				}
 				break;
 
+			case "kimi":
+				// Weekly / Ratelimit from /v1/usages. Prefer remainingPercentage only.
+				if (data.quotas) {
+					Object.entries(data.quotas).forEach(([name, quota]) => {
+						normalizedQuotas.push({
+							name,
+							used: quota.used || 0,
+							total: quota.total || 0,
+							resetAt: quota.resetAt || null,
+							remainingPercentage: quota.remainingPercentage,
+						});
+					});
+				}
+				break;
+
+			case "deepseek":
+				// Credit balance — remainingPercentage only (no absolute remaining).
+				if (data.quotas) {
+					Object.entries(data.quotas).forEach(([name, quota]) => {
+						normalizedQuotas.push({
+							name,
+							used: quota.used || 0,
+							total: quota.total || 0,
+							resetAt: quota.resetAt || null,
+							remainingPercentage: quota.remainingPercentage,
+						});
+					});
+				}
+				break;
+
 			case "t3chat": {
 				if (data.message) {
 					normalizedQuotas.push({

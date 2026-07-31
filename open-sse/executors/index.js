@@ -20,8 +20,13 @@ import { CommandCodeExecutor } from "./commandcode.js";
 import { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 import { MimoFreeExecutor } from "./mimo-free.js";
 import { CodeBuddyExecutor } from "./codebuddy-cn.js";
+import { CodeBuddyIntlExecutor } from "./codebuddy-intl.js";
+import TraeExecutor from "./trae.js";
+import ZedExecutor from "./zed.js";
+import WindsurfExecutor from "./windsurf.js";
 import { DefaultExecutor } from "./default.js";
 import { T3ChatExecutor } from "./t3chat.js";
+import { DevinCliExecutor } from "./devin-cli.js";
 
 const executors = {
 	antigravity: new AntigravityExecutor(),
@@ -52,6 +57,11 @@ const executors = {
 	mmf: new MimoFreeExecutor(), // Alias for mimo-free
 	t3chat: new T3ChatExecutor(),
 	"codebuddy-cn": new CodeBuddyExecutor(),
+	"codebuddy-intl": new CodeBuddyIntlExecutor(),
+	trae: new TraeExecutor(),
+	zed: new ZedExecutor(),
+	windsurf: new WindsurfExecutor(),
+	"devin-cli": new DevinCliExecutor(),
 };
 
 const defaultCache = new Map();
@@ -92,3 +102,8 @@ export { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 export { MimoFreeExecutor } from "./mimo-free.js";
 export { CodeBuddyExecutor } from "./codebuddy-cn.js";
 export { T3ChatExecutor } from "./t3chat.js";
+export { CodeBuddyIntlExecutor } from "./codebuddy-intl.js";
+export { default as TraeExecutor } from "./trae.js";
+export { default as ZedExecutor } from "./zed.js";
+export { default as WindsurfExecutor } from "./windsurf.js";
+export { DevinCliExecutor } from "./devin-cli.js";
