@@ -29,10 +29,12 @@ export default function AddApiKeyModal({
 	const isOllamaLocal = provider === "ollama-local";
 	const isCookie = authType === "cookie";
 	const isT3Chat = provider === "t3chat";
+	const isQoder = provider === "qoder";
 	const isXaiApiKey = provider === "xai" && !isCookie;
 	let credentialLabel = "API Key";
 	if (isT3Chat) credentialLabel = "Cookies";
 	else if (isCookie) credentialLabel = "Cookie Value";
+	else if (isQoder) credentialLabel = "Personal Access Token (PAT)";
 
 	let credentialPlaceholder = "";
 	if (isT3Chat) credentialPlaceholder = "wos-session=...; other_cookie=...";
@@ -47,7 +49,7 @@ export default function AddApiKeyModal({
 	const defaultRegion =
 		AI_PROVIDERS?.[provider]?.defaultRegion || providerRegions?.[0]?.id || "";
 	const bulkSubmitLabel = isT3Chat ? "Add All Accounts" : "Add All Keys";
-	
+
 	const [formData, setFormData] = useState({
 		name: "",
 		apiKey: "",
@@ -67,9 +69,11 @@ export default function AddApiKeyModal({
 	const [validating, setValidating] = useState(false);
 	const [validationResult, setValidationResult] = useState(null);
 	const [saving, setSaving] = useState(false);
-	const bulkPlaceholder = isCloudflareAi
-		? `name1|sk-key1|acc123456\nname2|sk-key2|def789012\nsk-key-only-auto-named`
-		: BULK_PLACEHOLDER;
+	let bulkPlaceholder = BULK_PLACEHOLDER;
+	if (isCloudflareAi)
+		bulkPlaceholder = `name1|sk-key1|acc123456\nname2|sk-key2|def789012\nsk-key-only-auto-named`;
+	else if (isQoder)
+		bulkPlaceholder = `name1|pt-xxxxx\nname2|pt-yyyyy\npt-only-auto-named`;
 
 	const [mode, setMode] = useState("single"); // "single" | "bulk"
 	const [bulkText, setBulkText] = useState("");
@@ -191,6 +195,21 @@ export default function AddApiKeyModal({
     let failed = 0;
     for (const entry of plan) {
       try {
+        // Validate each key before saving so bulk-added connections get a
+        // real status (active/unknown) like single adds, instead of a
+        // hardcoded "unknown" that never flips until a manual test.
+        let isValid = false;
+        try {
+          const vres = await fetch("/api/providers/validate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider, apiKey: entry.apiKey }),
+          });
+          const vdata = await vres.json().catch(() => ({}));
+          isValid = !!vdata.valid;
+        } catch {
+          isValid = false;
+        }
         const res = await fetch("/api/providers", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -199,7 +218,7 @@ export default function AddApiKeyModal({
             apiKey: entry.apiKey,
             name: entry.name,
             priority: 1,
-            testStatus: "unknown",
+            testStatus: isValid ? "active" : "unknown",
             ...(entry.providerSpecificData ? { providerSpecificData: entry.providerSpecificData } : {}),
           }),
         });
@@ -214,35 +233,7 @@ export default function AddApiKeyModal({
     if (success > 0 && onBulkDone) onBulkDone();
   };
 
-
 	if (!provider) return null;
-        {mode === "bulk" && (
-          <div className="flex flex-col gap-3">
-            <p className="text-xs text-text-muted">
-              {isCloudflareAi
-                ? <>One key per line. Format: <code>name|apiKey|accountId</code> or just <code>apiKey</code> (auto-named by index).</>
-                : <>One key per line. Format: <code>name|apiKey</code> or just <code>apiKey</code> (auto-named by index).</>
-              }
-            </p>
-            <textarea
-              className="w-full rounded border border-accent/30 bg-sidebar p-2 text-sm font-mono resize-y min-h-[140px] focus:outline-none focus:ring-1 focus:ring-primary"
-              placeholder={bulkPlaceholder}
-              value={bulkText}
-              onChange={(e) => setBulkText(e.target.value)}
-            />
-            {bulkResult && (
-              <div className={`text-sm font-medium ${bulkResult.failed > 0 ? "text-yellow-400" : "text-green-400"}`}>
-                ✓ {bulkResult.success} added{bulkResult.failed > 0 ? `, ✗ ${bulkResult.failed} failed` : ""}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <Button onClick={handleBulkSubmit} fullWidth disabled={saving || !bulkText.trim()}>
-                {saving ? "Adding..." : "Add All Keys"}
-              </Button>
-              <Button onClick={onClose} variant="ghost" fullWidth>Cancel</Button>
-            </div>
-          </div>
-        )}
 
 	return (
 		<Modal
@@ -283,6 +274,16 @@ export default function AddApiKeyModal({
 									One account per line. Format:{" "}
 									<code>cookies | convex_session_id</code>.
 								</>
+							) : isCloudflareAi ? (
+								<>
+									One key per line. Format: <code>name|apiKey|accountId</code> or
+									just <code>apiKey</code> (auto-named by index).
+								</>
+							) : isQoder ? (
+								<>
+									One PAT per line. Format: <code>name|pt-...</code> or just{" "}
+									<code>pt-...</code> (auto-named by index).
+								</>
 							) : (
 								<>
 									One key per line. Format: <code>name|apiKey</code> or just{" "}
@@ -293,7 +294,7 @@ export default function AddApiKeyModal({
 						<textarea
 							className="w-full rounded border border-accent/30 bg-sidebar p-2 text-sm font-mono resize-y min-h-[140px] focus:outline-none focus:ring-1 focus:ring-primary"
 							placeholder={
-								isT3Chat ? T3CHAT_BULK_PLACEHOLDER : BULK_PLACEHOLDER
+								isT3Chat ? T3CHAT_BULK_PLACEHOLDER : bulkPlaceholder
 							}
 							value={bulkText}
 							onChange={(e) => setBulkText(e.target.value)}
