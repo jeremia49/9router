@@ -207,9 +207,6 @@ export async function GET(request, { params }) {
 			}
 		}
 
-		// Fetch usage from provider API
-		let usage = await getUsageForProvider(connection, proxyOptions);
-
     // Fetch usage from provider API
     let usage = await getUsageForProvider(connection, proxyOptions, { force });
 
