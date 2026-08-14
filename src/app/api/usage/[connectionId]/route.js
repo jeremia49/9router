@@ -147,9 +147,10 @@ export async function refreshAndUpdateCredentials(
  * GET /api/usage/[connectionId] - Get usage data for a specific connection
  */
 export async function GET(request, { params }) {
-	let connection;
-	try {
-		const { connectionId } = await params;
+  let connection;
+  try {
+    const { connectionId } = await params;
+    const force = new URL(request.url).searchParams.get("force") === "1";
 
 		// Get connection from database
 		connection = await getProviderConnectionById(connectionId);
@@ -209,28 +210,25 @@ export async function GET(request, { params }) {
 		// Fetch usage from provider API
 		let usage = await getUsageForProvider(connection, proxyOptions);
 
-		// If provider returned an auth-expired message instead of throwing,
-		// force-refresh token and retry once (OAuth only)
-		if (isOAuth && isAuthExpiredMessage(usage) && connection.refreshToken) {
-			try {
-				const retryResult = await refreshAndUpdateCredentials(
-					connection,
-					true,
-					proxyOptions,
-				);
-				connection = retryResult.connection;
-				usage = await getUsageForProvider(connection, proxyOptions);
-			} catch (retryError) {
-				console.warn(
-					`[Usage] ${connection.provider}: force refresh failed: ${retryError.message}`,
-				);
-			}
-		}
+    // Fetch usage from provider API
+    let usage = await getUsageForProvider(connection, proxyOptions, { force });
 
-		return Response.json(usage);
-	} catch (error) {
-		const provider = connection?.provider ?? "unknown";
-		console.warn(`[Usage] ${provider}: ${error.message}`);
-		return Response.json({ error: error.message }, { status: 500 });
-	}
+    // If provider returned an auth-expired message instead of throwing,
+    // force-refresh token and retry once (OAuth only)
+    if (isOAuth && isAuthExpiredMessage(usage) && connection.refreshToken) {
+      try {
+        const retryResult = await refreshAndUpdateCredentials(connection, true, proxyOptions);
+        connection = retryResult.connection;
+        usage = await getUsageForProvider(connection, proxyOptions, { force });
+      } catch (retryError) {
+        console.warn(`[Usage] ${connection.provider}: force refresh failed: ${retryError.message}`);
+      }
+    }
+
+    return Response.json(usage);
+  } catch (error) {
+    const provider = connection?.provider ?? "unknown";
+    console.warn(`[Usage] ${provider}: ${error.message}`);
+    return Response.json({ error: error.message }, { status: 500 });
+  }
 }

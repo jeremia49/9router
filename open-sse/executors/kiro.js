@@ -166,6 +166,12 @@ function normalizeStopReason(value) {
 	return reason || null;
 }
 
+// Of the reasons stopDisposition() folds into "terminal_incomplete", only these
+// mean "usable as far as it got, then the budget ran out" -- the case
+// finish_reason "length" exists for. cancelled / pause_turn are abandoned turns
+// whose partial content must stay private, so they are deliberately absent.
+const KIRO_TRUNCATION_STOP_REASONS = new Set(["model_context_window_exceeded", "max_tokens"]);
+
 function stopDisposition(stopReason, hasToolCalls) {
 	if (["malformed_model_output", "invalid_model_output"].includes(stopReason))
 		return "retryable_protocol_failure";
@@ -812,478 +818,409 @@ export class KiroExecutor extends BaseExecutor {
 			finished: false,
 		};
 
-		const diagnostics = (overrides = {}) => ({
-			terminal_provenance: state.terminalProvenance || "clean_eventstream_eof",
-			transport_state: state.transportState,
-			stop_reason: state.stopReason,
-			stop_disposition: stopDisposition(state.stopReason, state.hasToolCalls),
-			response_state: state.hasToolCalls
-				? "valid_tool"
-				: state.hasText || state.hasReasoning || state.hasCode
-					? "text_reasoning"
-					: state.explicitStop
-						? "explicit_stop"
-						: "no_semantic_output",
-			event_counts: { ...eventCounts },
-			incomplete_frame_bytes: state.buffer.byteLength,
-			...overrides,
-		});
-		const sseChunk = (delta, finishReason = null, usage) =>
-			encoder.encode(
-				`data: ${JSON.stringify({
-					id: responseId,
-					object: "chat.completion.chunk",
-					created,
-					model,
-					choices: [{ index: 0, delta, finish_reason: finishReason }],
-					...(usage ? { usage } : {}),
-				})}\n\n`,
-			);
-		const emitDelta = (controller, delta) => {
-			if (state.chunkIndex === 0) delta = { role: "assistant", ...delta };
-			state.chunkIndex++;
-			controller.enqueue(sseChunk(delta));
-		};
-		const fail = (controller, provenance, code, message, extra = {}) => {
-			state.finished = true;
-			state.terminalProvenance = provenance;
-			state.transportState = extra.transport_state || "corrupt_frame";
-			const detail = diagnostics({
-				stop_disposition: extra.stop_disposition || "terminal_incomplete",
-				...extra,
-			});
-			options.onTerminalState?.(detail);
-			controller.enqueue(encodeSSEError(code, message, detail));
-		};
-		const assertToolBufferBound = () => {
-			if (
-				state.bufferedToolBytes <=
-				(options.maxToolBytes || KIRO_REPAIR_BUFFER_MAX_BYTES / 2)
-			)
-				return;
-			const error = new Error(
-				"Kiro buffered tool input exceeded the integrity memory bound",
-			);
-			error.code = "KIRO_BUFFER_EXCEEDED";
-			throw error;
-		};
-		const appendToolInput = (tool, input) => {
-			if (input === undefined) return;
-			if (typeof input === "string") {
-				if (tool.inputKind && tool.inputKind !== "string")
-					throw new Error("Kiro tool input changed fragment type");
-				tool.inputKind = "string";
-				tool.inputChunks ||= [];
-				tool.inputChunks.push(input);
-				state.bufferedToolBytes += encoder.encode(input).byteLength;
-			} else if (input && typeof input === "object" && !Array.isArray(input)) {
-				if (tool.inputKind && tool.inputKind !== "object")
-					throw new Error("Kiro tool input changed fragment type");
-				tool.inputKind = "object";
-				state.bufferedToolBytes -= tool.inputBytes || 0;
-				tool.inputObject = input;
-				tool.inputBytes = encoder.encode(JSON.stringify(input)).byteLength;
-				state.bufferedToolBytes += tool.inputBytes;
-			} else {
-				throw new Error("Kiro tool input must be a JSON object");
-			}
-			assertToolBufferBound();
-		};
-		const parsedToolInput = (tool) => {
-			if (!tool.inputKind) throw new Error("Kiro tool call is missing input");
-			if (tool.inputKind === "object") return tool.inputObject;
-			try {
-				const input = JSON.parse(tool.inputChunks.join(""));
-				if (!input || typeof input !== "object" || Array.isArray(input))
-					throw new Error("not an object");
-				return input;
-			} catch (error) {
-				throw new Error(
-					`Kiro tool input must be valid object JSON (${error.message})`,
-				);
-			}
-		};
-		const emitTools = (controller) => {
-			for (const tool of state.tools.values()) {
-				const input = parsedToolInput(tool);
-				if (tool.name === "tool_call") {
-					if (typeof input.name !== "string" || !input.name.trim()) {
-						throw new Error(
-							"Invalid Kiro tool_call payload: missing nested MCP tool name",
-						);
-					}
-					if (!Object.prototype.hasOwnProperty.call(input, "arguments")) {
-						throw new Error(
-							"Invalid Kiro tool_call payload: missing nested MCP tool arguments",
-						);
-					}
-				}
-				const index = state.toolCounter++;
-				emitDelta(controller, {
-					tool_calls: [
-						{
-							index,
-							id: tool.id,
-							type: "function",
-							function: { name: tool.name, arguments: "" },
-						},
-					],
-				});
-				emitDelta(controller, {
-					tool_calls: [
-						{ index, function: { arguments: JSON.stringify(input) } },
-					],
-				});
-				state.hasToolCalls = true;
-			}
-			state.tools.clear();
-			state.bufferedToolBytes = 0;
-			if (state.stopReason === "tool_use" && !state.hasToolCalls) {
-				throw new Error(
-					"Kiro tool_use stop reason did not include a complete tool call",
-				);
-			}
-		};
-		const processEvent = (event, controller) => {
-			const messageType = event.headers[":message-type"];
-			if (messageType === "error" || messageType === "exception") {
-				fail(
-					controller,
-					"upstream_eventstream_error",
-					"kiro_upstream_eventstream_error",
-					event.payload?.message ||
-						`Kiro upstream sent an EventStream ${messageType}`,
-					{ transport_state: "upstream_error" },
-				);
-				return false;
-			}
+    const diagnostics = (overrides = {}) => ({
+      terminal_provenance: state.terminalProvenance || "clean_eventstream_eof",
+      transport_state: state.transportState,
+      stop_reason: state.stopReason,
+      stop_disposition: stopDisposition(state.stopReason, state.hasToolCalls),
+      response_state: state.hasToolCalls
+        ? "valid_tool"
+        : state.hasText || state.hasReasoning || state.hasCode
+          ? "text_reasoning"
+          : state.explicitStop
+            ? "explicit_stop"
+            : "no_semantic_output",
+      event_counts: { ...eventCounts },
+      incomplete_frame_bytes: state.buffer.byteLength,
+      ...overrides
+    });
+    const sseChunk = (delta, finishReason = null, usage) => encoder.encode(`data: ${JSON.stringify({
+      id: responseId,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices: [{ index: 0, delta, finish_reason: finishReason }],
+      ...(usage ? { usage } : {})
+    })}\n\n`);
+    const emitDelta = (controller, delta) => {
+      if (state.chunkIndex === 0) delta = { role: "assistant", ...delta };
+      state.chunkIndex++;
+      controller.enqueue(sseChunk(delta));
+    };
+    const fail = (controller, provenance, code, message, extra = {}) => {
+      state.finished = true;
+      state.terminalProvenance = provenance;
+      state.transportState = extra.transport_state || "corrupt_frame";
+      const detail = diagnostics({
+        stop_disposition: extra.stop_disposition || "terminal_incomplete",
+        ...extra
+      });
+      options.onTerminalState?.(detail);
+      controller.enqueue(encodeSSEError(code, message, detail));
+    };
+    const assertToolBufferBound = () => {
+      if (state.bufferedToolBytes <= (options.maxToolBytes || KIRO_REPAIR_BUFFER_MAX_BYTES / 2)) return;
+      const error = new Error("Kiro buffered tool input exceeded the integrity memory bound");
+      error.code = "KIRO_BUFFER_EXCEEDED";
+      throw error;
+    };
+    const appendToolInput = (tool, input) => {
+      if (input === undefined) return;
+      if (typeof input === "string") {
+        if (tool.inputKind && tool.inputKind !== "string") throw new Error("Kiro tool input changed fragment type");
+        tool.inputKind = "string";
+        tool.inputChunks ||= [];
+        tool.inputChunks.push(input);
+        state.bufferedToolBytes += encoder.encode(input).byteLength;
+      } else if (input && typeof input === "object" && !Array.isArray(input)) {
+        if (tool.inputKind && tool.inputKind !== "object") throw new Error("Kiro tool input changed fragment type");
+        tool.inputKind = "object";
+        state.bufferedToolBytes -= tool.inputBytes || 0;
+        tool.inputObject = input;
+        tool.inputBytes = encoder.encode(JSON.stringify(input)).byteLength;
+        state.bufferedToolBytes += tool.inputBytes;
+      } else {
+        throw new Error("Kiro tool input must be a JSON object");
+      }
+      assertToolBufferBound();
+    };
+    const parsedToolInput = (tool) => {
+      if (!tool.inputKind) throw new Error("Kiro tool call is missing input");
+      if (tool.inputKind === "object") return tool.inputObject;
+      try {
+        const input = JSON.parse(tool.inputChunks.join(""));
+        if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("not an object");
+        return input;
+      } catch (error) {
+        throw new Error(`Kiro tool input must be valid object JSON (${error.message})`);
+      }
+    };
+    const emitTools = (controller) => {
+      for (const tool of state.tools.values()) {
+        // Validate per tool, not per turn: one unusable fragment used to throw out
+        // of emitTools and take every other complete tool call in the same turn
+        // with it, which the client saw as a turn that answered nothing.
+        let input;
+        try {
+          input = parsedToolInput(tool);
+          if (tool.name === "tool_call") {
+            if (typeof input.name !== "string" || !input.name.trim()) {
+              throw new Error("Invalid Kiro tool_call payload: missing nested MCP tool name");
+            }
+            if (!Object.prototype.hasOwnProperty.call(input, "arguments")) {
+              throw new Error("Invalid Kiro tool_call payload: missing nested MCP tool arguments");
+            }
+          }
+        } catch (error) {
+          state.droppedTools = (state.droppedTools || 0) + 1;
+          state.toolValidationError ||= error.message;
+          console.error(`[Kiro] dropping unusable tool call ${tool.id} (${tool.name}): ${error.message}`);
+          continue;
+        }
+        const index = state.toolCounter++;
+        emitDelta(controller, {
+          tool_calls: [{
+            index,
+            id: tool.id,
+            type: "function",
+            function: { name: tool.name, arguments: "" }
+          }]
+        });
+        const serializedInput = JSON.stringify(input);
+        emitDelta(controller, {
+          tool_calls: [{ index, function: { arguments: serializedInput } }]
+        });
+        // Tool arguments are billed output like any other completion bytes. They
+        // were never added to totalContentLength, so the /4 estimator in finish()
+        // reported OUT 0 -- or the Math.max floor of 1 -- for every turn whose
+        // entire answer was a tool call.
+        state.totalContentLength += tool.name.length + serializedInput.length;
+        state.hasToolCalls = true;
+      }
+      state.tools.clear();
+      state.bufferedToolBytes = 0;
+      // A declared tool turn that emitted no usable call is only fatal when the
+      // turn produced nothing else. Throwing unconditionally here escaped
+      // emitTools() with provenance "invalid_tool_call", which the integrity gate
+      // re-derived into a repair retry -- discarding text the client had already
+      // been promised.
+      if (state.stopReason === "tool_use" && !state.hasToolCalls &&
+          !state.hasText && !state.hasReasoning && !state.hasCode) {
+        throw new Error("Kiro tool_use stop reason did not include a complete tool call");
+      }
+    };
+    const processEvent = (event, controller) => {
+      const messageType = event.headers[":message-type"];
+      if (messageType === "error" || messageType === "exception") {
+        fail(
+          controller,
+          "upstream_eventstream_error",
+          "kiro_upstream_eventstream_error",
+          event.payload?.message || `Kiro upstream sent an EventStream ${messageType}`,
+          { transport_state: "upstream_error" }
+        );
+        return false;
+      }
 
-			const eventType = event.headers[":event-type"] || "";
-			const eventCountKey = KIRO_EVENT_TYPES.has(eventType)
-				? eventType
-				: "other";
-			eventCounts[eventCountKey] = (eventCounts[eventCountKey] || 0) + 1;
-			if (
-				eventType === "assistantResponseEvent" &&
-				typeof event.payload?.content === "string"
-			) {
-				let content = event.payload.content;
-				if (state.inThinking) {
-					const end = content.indexOf("</thinking>");
-					if (end < 0) content = "";
-					else {
-						state.inThinking = false;
-						content = content.slice(end + 11).replace(/^\n/u, "");
-					}
-				} else {
-					const start = content.indexOf("<thinking>");
-					if (start >= 0) {
-						const end = content.indexOf("</thinking>", start + 10);
-						if (end < 0) {
-							state.inThinking = true;
-							content = content.slice(0, start);
-						} else {
-							content =
-								content.slice(0, start) +
-								content.slice(end + 11).replace(/^\n/u, "");
-						}
-					}
-				}
-				if (content || !state.hasReasoning) {
-					state.hasText ||= content.length > 0;
-					state.totalContentLength += content.length;
-					emitDelta(controller, { content });
-				}
-			} else if (eventType === "reasoningContentEvent") {
-				const value =
-					event.payload?.reasoningContentEvent || event.payload || {};
-				const content =
-					typeof value === "string" ? value : value.text || value.content || "";
-				if (content) {
-					state.hasReasoning = true;
-					state.totalContentLength += content.length;
-					emitDelta(controller, { reasoning_content: content });
-				}
-			} else if (
-				eventType === "codeEvent" &&
-				typeof event.payload?.content === "string"
-			) {
-				state.hasCode = true;
-				state.totalContentLength += event.payload.content.length;
-				emitDelta(controller, { content: event.payload.content });
-			} else if (eventType === "toolUseEvent") {
-				state.sawToolUse = true;
-				if (state.toolValidationError) return true;
-				const values = Array.isArray(event.payload)
-					? event.payload
-					: [event.payload];
-				if (!values[0]) throw new Error("Kiro toolUseEvent is empty");
-				for (const value of values) {
-					const name = typeof value?.name === "string" ? value.name.trim() : "";
-					if (!name)
-						throw new Error("Kiro toolUseEvent is missing a tool name");
-					let id;
-					if (value.toolUseId == null) {
-						id = `call_${created}_${state.tools.size + 1}`;
-					} else if (
-						typeof value.toolUseId !== "string" ||
-						!value.toolUseId.trim()
-					) {
-						throw new Error("Kiro toolUseEvent has an invalid toolUseId");
-					} else {
-						id = value.toolUseId;
-					}
-					let tool = state.tools.get(id);
-					if (!tool) {
-						tool = { id, name };
-						state.tools.set(id, tool);
-						state.bufferedToolBytes +=
-							encoder.encode(id).byteLength +
-							encoder.encode(name).byteLength +
-							32;
-						assertToolBufferBound();
-					} else if (tool.name !== name) {
-						throw new Error("Kiro tool name changed between fragments");
-					}
-					appendToolInput(tool, value.input);
-				}
-			} else if (eventType === "messageStopEvent") {
-				state.explicitStop = true;
-				const reason =
-					normalizeStopReason(
-						event.payload?.stopReason ?? event.payload?.stop_reason,
-					) || (state.sawToolUse ? "tool_use" : "end_turn");
-				const merged = mergeStopReason(state.stopReason, reason);
-				if (merged !== state.stopReason)
-					state.terminalProvenance = "message_stop_event";
-				state.stopReason = merged;
-			} else if (
-				eventType === "metadataEvent" ||
-				eventType === "MetadataEvent"
-			) {
-				const metadata =
-					event.payload?.metadataEvent ||
-					event.payload?.metadata ||
-					event.payload;
-				const reason = normalizeStopReason(
-					metadata?.stopReason ?? metadata?.stop_reason,
-				);
-				if (reason) {
-					state.explicitStop = true;
-					const merged = mergeStopReason(state.stopReason, reason);
-					if (merged !== state.stopReason)
-						state.terminalProvenance = "metadata_stop_reason";
-					state.stopReason = merged;
-				}
-			} else if (eventType === "contextUsageEvent") {
-				const percentage = Number(event.payload?.contextUsagePercentage);
-				if (Number.isFinite(percentage)) {
-					state.contextUsagePercentage = percentage;
-					state.hasContextUsage = true;
-				}
-			} else if (eventType === "meteringEvent") {
-				state.hasMetering = true;
-				const metering = event.payload?.meteringEvent || event.payload || {};
-				const credits = Number(metering.usage);
-				if (Number.isFinite(credits)) {
-					state.usage = {
-						...(state.usage || {}),
-						kiro_credits: credits,
-						kiro_credit_unit:
-							typeof metering.unit === "string" ? metering.unit : "credit",
-					};
-				}
-			} else if (eventType === "metricsEvent") {
-				const metrics = event.payload?.metricsEvent || event.payload || {};
-				const prompt = Number(metrics.inputTokens) || 0;
-				const completion = Number(metrics.outputTokens) || 0;
-				if (prompt || completion) {
-					state.usage = {
-						...(state.usage || {}),
-						prompt_tokens: prompt,
-						completion_tokens: completion,
-						total_tokens: prompt + completion,
-					};
-					const cacheRead =
-						Number(
-							metrics.cacheReadInputTokens || metrics.cache_read_input_tokens,
-						) || 0;
-					const cacheCreate =
-						Number(
-							metrics.cacheCreationInputTokens ||
-								metrics.cache_creation_input_tokens,
-						) || 0;
-					if (cacheRead) state.usage.cache_read_input_tokens = cacheRead;
-					if (cacheCreate)
-						state.usage.cache_creation_input_tokens = cacheCreate;
-				}
-			}
-			return true;
-		};
-		const processBytes = (chunk, controller) => {
-			const combinedLength = state.buffer.byteLength + chunk.byteLength;
-			if (
-				combinedLength > (options.maxRawBytes || EVENTSTREAM_MAX_MESSAGE_BYTES)
-			) {
-				fail(
-					controller,
-					"corrupt_eventstream_frame",
-					"kiro_missing_terminal",
-					"Kiro EventStream buffered bytes exceed the protocol bound",
-				);
-				return false;
-			}
-			if (state.buffer.byteLength === 0) {
-				state.buffer = chunk;
-			} else {
-				const joined = new Uint8Array(combinedLength);
-				joined.set(state.buffer);
-				joined.set(chunk, state.buffer.byteLength);
-				state.buffer = joined;
-			}
+      const eventType = event.headers[":event-type"] || "";
+      const eventCountKey = KIRO_EVENT_TYPES.has(eventType) ? eventType : "other";
+      eventCounts[eventCountKey] = (eventCounts[eventCountKey] || 0) + 1;
+      if (eventType === "assistantResponseEvent" && typeof event.payload?.content === "string") {
+        let content = event.payload.content;
+        if (state.inThinking) {
+          const end = content.indexOf("</thinking>");
+          if (end < 0) content = "";
+          else {
+            state.inThinking = false;
+            content = content.slice(end + 11).replace(/^\n/u, "");
+          }
+        } else {
+          const start = content.indexOf("<thinking>");
+          if (start >= 0) {
+            const end = content.indexOf("</thinking>", start + 10);
+            if (end < 0) {
+              state.inThinking = true;
+              content = content.slice(0, start);
+            } else {
+              content = content.slice(0, start) + content.slice(end + 11).replace(/^\n/u, "");
+            }
+          }
+        }
+        if (content || !state.hasReasoning) {
+          state.hasText ||= content.length > 0;
+          state.totalContentLength += content.length;
+          emitDelta(controller, { content });
+        }
+      } else if (eventType === "reasoningContentEvent") {
+        const value = event.payload?.reasoningContentEvent || event.payload || {};
+        const content = typeof value === "string" ? value : value.text || value.content || "";
+        if (content) {
+          state.hasReasoning = true;
+          state.totalContentLength += content.length;
+          emitDelta(controller, { reasoning_content: content });
+        }
+      } else if (eventType === "codeEvent" && typeof event.payload?.content === "string") {
+        state.hasCode = true;
+        state.totalContentLength += event.payload.content.length;
+        emitDelta(controller, { content: event.payload.content });
+      } else if (eventType === "toolUseEvent") {
+        state.sawToolUse = true;
+        const values = Array.isArray(event.payload) ? event.payload : [event.payload];
+        if (!values[0]) throw new Error("Kiro toolUseEvent is empty");
+        for (const value of values) {
+          const name = typeof value?.name === "string" ? value.name.trim() : "";
+          if (!name) throw new Error("Kiro toolUseEvent is missing a tool name");
+          let id;
+          if (value.toolUseId == null) {
+            id = `call_${created}_${state.tools.size + 1}`;
+          } else if (typeof value.toolUseId !== "string" || !value.toolUseId.trim()) {
+            throw new Error("Kiro toolUseEvent has an invalid toolUseId");
+          } else {
+            id = value.toolUseId;
+          }
+          let tool = state.tools.get(id);
+          if (!tool) {
+            tool = { id, name };
+            state.tools.set(id, tool);
+            state.bufferedToolBytes += encoder.encode(id).byteLength + encoder.encode(name).byteLength + 32;
+            assertToolBufferBound();
+          } else if (tool.name !== name) {
+            throw new Error("Kiro tool name changed between fragments");
+          }
+          appendToolInput(tool, value.input);
+        }
+      } else if (eventType === "messageStopEvent") {
+        state.explicitStop = true;
+        const reason = normalizeStopReason(
+          event.payload?.stopReason ?? event.payload?.stop_reason
+        ) || (state.sawToolUse ? "tool_use" : "end_turn");
+        const merged = mergeStopReason(state.stopReason, reason);
+        if (merged !== state.stopReason) state.terminalProvenance = "message_stop_event";
+        state.stopReason = merged;
+      } else if (eventType === "metadataEvent" || eventType === "MetadataEvent") {
+        const metadata = event.payload?.metadataEvent || event.payload?.metadata || event.payload;
+        const reason = normalizeStopReason(metadata?.stopReason ?? metadata?.stop_reason);
+        if (reason) {
+          state.explicitStop = true;
+          const merged = mergeStopReason(state.stopReason, reason);
+          if (merged !== state.stopReason) state.terminalProvenance = "metadata_stop_reason";
+          state.stopReason = merged;
+        }
+      } else if (eventType === "contextUsageEvent") {
+        const percentage = Number(event.payload?.contextUsagePercentage);
+        if (Number.isFinite(percentage)) {
+          state.contextUsagePercentage = percentage;
+          state.hasContextUsage = true;
+        }
+      } else if (eventType === "meteringEvent") {
+        state.hasMetering = true;
+        const metering = event.payload?.meteringEvent || event.payload || {};
+        const credits = Number(metering.usage);
+        if (Number.isFinite(credits)) {
+          state.usage = {
+            ...(state.usage || {}),
+            kiro_credits: credits,
+            kiro_credit_unit: typeof metering.unit === "string" ? metering.unit : "credit"
+          };
+        }
+      } else if (eventType === "metricsEvent") {
+        const metrics = event.payload?.metricsEvent || event.payload || {};
+        const prompt = Number(metrics.inputTokens) || 0;
+        const completion = Number(metrics.outputTokens) || 0;
+        if (prompt || completion) {
+          state.usage = {
+            ...(state.usage || {}),
+            prompt_tokens: prompt,
+            completion_tokens: completion,
+            total_tokens: prompt + completion
+          };
+          const cacheRead = Number(metrics.cacheReadInputTokens || metrics.cache_read_input_tokens) || 0;
+          const cacheCreate = Number(metrics.cacheCreationInputTokens || metrics.cache_creation_input_tokens) || 0;
+          if (cacheRead) state.usage.cache_read_input_tokens = cacheRead;
+          if (cacheCreate) state.usage.cache_creation_input_tokens = cacheCreate;
+        }
+      }
+      return true;
+    };
+    const processBytes = (chunk, controller) => {
+      const combinedLength = state.buffer.byteLength + chunk.byteLength;
+      if (combinedLength > (options.maxRawBytes || EVENTSTREAM_MAX_MESSAGE_BYTES)) {
+        fail(
+          controller,
+          "corrupt_eventstream_frame",
+          "kiro_missing_terminal",
+          "Kiro EventStream buffered bytes exceed the protocol bound"
+        );
+        return false;
+      }
+      if (state.buffer.byteLength === 0) {
+        state.buffer = chunk;
+      } else {
+        const joined = new Uint8Array(combinedLength);
+        joined.set(state.buffer);
+        joined.set(chunk, state.buffer.byteLength);
+        state.buffer = joined;
+      }
 
-			while (state.buffer.byteLength >= 12) {
-				const view = new DataView(state.buffer.buffer, state.buffer.byteOffset);
-				if (view.getUint32(8, false) !== crc32(state.buffer.subarray(0, 8))) {
-					fail(
-						controller,
-						"corrupt_eventstream_frame",
-						"kiro_missing_terminal",
-						"Kiro EventStream prelude CRC mismatch",
-					);
-					return false;
-				}
-				const totalLength = view.getUint32(0, false);
-				const headersLength = view.getUint32(4, false);
-				if (
-					totalLength < 16 ||
-					totalLength > EVENTSTREAM_MAX_MESSAGE_BYTES ||
-					headersLength > EVENTSTREAM_MAX_HEADERS_BYTES ||
-					headersLength > totalLength - 16
-				) {
-					fail(
-						controller,
-						"corrupt_eventstream_frame",
-						"kiro_missing_terminal",
-						"Kiro EventStream frame bounds are invalid",
-					);
-					return false;
-				}
-				if (state.buffer.byteLength < totalLength) break;
-				const frame = state.buffer.slice(0, totalLength);
-				state.buffer = state.buffer.slice(totalLength);
-				let event;
-				try {
-					event = parseEventFrame(frame);
-				} catch (error) {
-					fail(
-						controller,
-						"corrupt_eventstream_frame",
-						"kiro_missing_terminal",
-						error.message,
-					);
-					return false;
-				}
-				state.transportState = "valid_complete_frame";
-				state.validatedFrames++;
-				try {
-					if (!processEvent(event, controller)) return false;
-				} catch (error) {
-					const bufferExceeded = error.code === "KIRO_BUFFER_EXCEEDED";
-					if (!bufferExceeded) {
-						state.toolValidationError ||= error.message;
-						state.tools.clear();
-						state.bufferedToolBytes = 0;
-						continue;
-					}
-					fail(
-						controller,
-						"integrity_buffer_exceeded",
-						"kiro_integrity_buffer_exceeded",
-						error.message,
-						{
-							transport_state: state.transportState,
-							stop_disposition: "terminal_incomplete",
-						},
-					);
-					return false;
-				}
-			}
-			return true;
-		};
-		const finish = (controller) => {
-			if (state.finished) return;
-			if (state.buffer.byteLength) {
-				fail(
-					controller,
-					"incomplete_eventstream_frame",
-					"kiro_missing_terminal",
-					"Kiro EventStream ended with a truncated frame",
-					{ transport_state: "incomplete_frame" },
-				);
-				return;
-			}
-			state.transportState = "clean_eof";
-			const declaredDisposition = stopDisposition(
-				state.stopReason,
-				state.sawToolUse,
-			);
-			if (
-				[
-					"retryable_protocol_failure",
-					"terminal_incomplete",
-					"terminal_refusal",
-					"unknown_failure",
-				].includes(declaredDisposition)
-			) {
-				const code =
-					declaredDisposition === "retryable_protocol_failure"
-						? "kiro_retryable_protocol_failure"
-						: declaredDisposition === "terminal_refusal"
-							? "kiro_terminal_refusal"
-							: declaredDisposition === "terminal_incomplete"
-								? "kiro_terminal_incomplete"
-								: "kiro_unknown_stop_reason";
-				fail(
-					controller,
-					state.terminalProvenance || "metadata_stop_reason",
-					code,
-					`Kiro ended with non-success stop reason: ${state.stopReason}`,
-					{
-						transport_state: state.transportState,
-						stop_disposition: declaredDisposition,
-					},
-				);
-				return;
-			}
-			if (state.toolValidationError) {
-				fail(
-					controller,
-					"invalid_tool_call",
-					"invalid_kiro_tool_call",
-					state.toolValidationError,
-					{
-						transport_state: state.transportState,
-						stop_disposition: "retryable_protocol_failure",
-					},
-				);
-				return;
-			}
-			try {
-				emitTools(controller);
-			} catch (error) {
-				fail(
-					controller,
-					"invalid_tool_call",
-					"invalid_kiro_tool_call",
-					error.message,
-					{
-						transport_state: state.transportState,
-						stop_disposition: "retryable_protocol_failure",
-					},
-				);
-				return;
-			}
+      while (state.buffer.byteLength >= 12) {
+        const view = new DataView(state.buffer.buffer, state.buffer.byteOffset);
+        if (view.getUint32(8, false) !== crc32(state.buffer.subarray(0, 8))) {
+          fail(controller, "corrupt_eventstream_frame", "kiro_missing_terminal", "Kiro EventStream prelude CRC mismatch");
+          return false;
+        }
+        const totalLength = view.getUint32(0, false);
+        const headersLength = view.getUint32(4, false);
+        if (totalLength < 16 || totalLength > EVENTSTREAM_MAX_MESSAGE_BYTES ||
+            headersLength > EVENTSTREAM_MAX_HEADERS_BYTES || headersLength > totalLength - 16) {
+          fail(controller, "corrupt_eventstream_frame", "kiro_missing_terminal", "Kiro EventStream frame bounds are invalid");
+          return false;
+        }
+        if (state.buffer.byteLength < totalLength) break;
+        const frame = state.buffer.slice(0, totalLength);
+        state.buffer = state.buffer.slice(totalLength);
+        let event;
+        try {
+          event = parseEventFrame(frame);
+        } catch (error) {
+          fail(controller, "corrupt_eventstream_frame", "kiro_missing_terminal", error.message);
+          return false;
+        }
+        state.transportState = "valid_complete_frame";
+        state.validatedFrames++;
+        try {
+          if (!processEvent(event, controller)) return false;
+        } catch (error) {
+          const bufferExceeded = error.code === "KIRO_BUFFER_EXCEEDED";
+          if (!bufferExceeded) {
+            // Keep whatever is already buffered: the rejected fragment belongs to
+            // one tool, and clearing the map dropped the complete calls too.
+            state.toolValidationError ||= error.message;
+            console.error(`[Kiro] tool fragment rejected, keeping ${state.tools.size} buffered tool(s): ${error.message}`);
+            continue;
+          }
+          fail(
+            controller,
+            "integrity_buffer_exceeded",
+            "kiro_integrity_buffer_exceeded",
+            error.message,
+            {
+              transport_state: state.transportState,
+              stop_disposition: "terminal_incomplete"
+            }
+          );
+          return false;
+        }
+      }
+      return true;
+    };
+    const finish = (controller) => {
+      if (state.finished) return;
+      if (state.buffer.byteLength) {
+        fail(
+          controller,
+          "incomplete_eventstream_frame",
+          "kiro_missing_terminal",
+          "Kiro EventStream ended with a truncated frame",
+          { transport_state: "incomplete_frame" }
+        );
+        return;
+      }
+      state.transportState = "clean_eof";
+      const declaredDisposition = stopDisposition(state.stopReason, state.sawToolUse);
+      // model_context_window_exceeded / max_tokens map to terminal_incomplete. When
+      // they arrive after the model already streamed content, fail() threw away a
+      // complete-enough answer; a truncated turn is what finish_reason "length" is
+      // for. chunkIndex > 0 means at least one delta already reached the client.
+      const declaredTruncatedAfterOutput = declaredDisposition === "terminal_incomplete" &&
+        KIRO_TRUNCATION_STOP_REASONS.has(state.stopReason) && state.chunkIndex > 0;
+      if (declaredTruncatedAfterOutput) {
+        console.error(`[Kiro] truncated after ${state.chunkIndex} chunk(s) (stop_reason=${state.stopReason}); keeping output`);
+      }
+      if (!declaredTruncatedAfterOutput && ["retryable_protocol_failure", "terminal_incomplete", "terminal_refusal", "unknown_failure"].includes(declaredDisposition)) {
+        const code = declaredDisposition === "retryable_protocol_failure"
+          ? "kiro_retryable_protocol_failure"
+          : declaredDisposition === "terminal_refusal"
+            ? "kiro_terminal_refusal"
+            : declaredDisposition === "terminal_incomplete"
+              ? "kiro_terminal_incomplete"
+              : "kiro_unknown_stop_reason";
+        fail(
+          controller,
+          state.terminalProvenance || "metadata_stop_reason",
+          code,
+          `Kiro ended with non-success stop reason: ${state.stopReason}`,
+          { transport_state: state.transportState, stop_disposition: declaredDisposition }
+        );
+        return;
+      }
+      try {
+        emitTools(controller);
+      } catch (error) {
+        fail(
+          controller,
+          "invalid_tool_call",
+          "invalid_kiro_tool_call",
+          error.message,
+          { transport_state: state.transportState, stop_disposition: "retryable_protocol_failure" }
+        );
+        return;
+      }
+      // Fail only when the turn has nothing usable left. emitTools() validates
+      // per tool and drops just the unusable ones, so this has to run AFTER it:
+      // before, the rejected tool was still buffered and tools.size was never 0.
+      // A turn that also produced text keeps that text -- the dropped call is
+      // logged, not fatal.
+      if (state.toolValidationError && !state.hasToolCalls &&
+          !state.hasText && !state.hasReasoning && !state.hasCode) {
+        fail(
+          controller,
+          "invalid_tool_call",
+          "invalid_kiro_tool_call",
+          state.toolValidationError,
+          { transport_state: state.transportState, stop_disposition: "retryable_protocol_failure" }
+        );
+        return;
+      }
 
 			const hasOutput =
 				state.hasText ||
@@ -1301,71 +1238,63 @@ export class KiroExecutor extends BaseExecutor {
 				return;
 			}
 
-			const disposition = stopDisposition(state.stopReason, state.hasToolCalls);
-			if (
-				[
-					"retryable_protocol_failure",
-					"terminal_incomplete",
-					"terminal_refusal",
-					"unknown_failure",
-				].includes(disposition)
-			) {
-				const code =
-					disposition === "retryable_protocol_failure"
-						? "kiro_retryable_protocol_failure"
-						: disposition === "terminal_refusal"
-							? "kiro_terminal_refusal"
-							: disposition === "terminal_incomplete"
-								? "kiro_terminal_incomplete"
-								: "kiro_unknown_stop_reason";
-				fail(
-					controller,
-					state.terminalProvenance || "metadata_stop_reason",
-					code,
-					`Kiro ended with non-success stop reason: ${state.stopReason}`,
-					{
-						transport_state: state.transportState,
-						stop_disposition: disposition,
-					},
-				);
-				return;
-			}
+      const disposition = stopDisposition(state.stopReason, state.hasToolCalls);
+      // Same reasoning as declaredTruncatedAfterOutput above.
+      const truncatedAfterOutput = disposition === "terminal_incomplete" &&
+        KIRO_TRUNCATION_STOP_REASONS.has(state.stopReason) && state.chunkIndex > 0;
+      if (truncatedAfterOutput) {
+        console.error(`[Kiro] truncated after ${state.chunkIndex} chunk(s) (stop_reason=${state.stopReason}); closing as length`);
+      }
+      if (!truncatedAfterOutput && ["retryable_protocol_failure", "terminal_incomplete", "terminal_refusal", "unknown_failure"].includes(disposition)) {
+        const code = disposition === "retryable_protocol_failure"
+          ? "kiro_retryable_protocol_failure"
+          : disposition === "terminal_refusal"
+            ? "kiro_terminal_refusal"
+            : disposition === "terminal_incomplete"
+              ? "kiro_terminal_incomplete"
+              : "kiro_unknown_stop_reason";
+        fail(
+          controller,
+          state.terminalProvenance || "metadata_stop_reason",
+          code,
+          `Kiro ended with non-success stop reason: ${state.stopReason}`,
+          { transport_state: state.transportState, stop_disposition: disposition }
+        );
+        return;
+      }
 
-			if (
-				state.hasMetering &&
-				state.hasContextUsage &&
-				!state.usage?.total_tokens
-			) {
-				const completion = state.totalContentLength
-					? Math.max(1, Math.floor(state.totalContentLength / 4))
-					: 0;
-				const prompt = Math.floor(
-					(state.contextUsagePercentage * contextWindow) / 100,
-				);
-				state.usage = {
-					...(state.usage || {}),
-					prompt_tokens: prompt,
-					completion_tokens: completion,
-					total_tokens: prompt + completion,
-				};
-			}
-			const finishReason = state.hasToolCalls
-				? "tool_calls"
-				: disposition === "length"
-					? "length"
-					: "stop";
-			controller.enqueue(sseChunk({}, finishReason, state.usage));
-			controller.enqueue(encoder.encode(SSE_DONE));
-			state.finished = true;
-			options.onTerminalState?.(
-				diagnostics({
-					terminal_provenance:
-						state.terminalProvenance || "clean_eventstream_eof",
-					transport_state: state.transportState,
-					stop_disposition: disposition,
-				}),
-			);
-		};
+      if (state.hasMetering && state.hasContextUsage && !state.usage?.total_tokens) {
+        const completion = state.totalContentLength
+          ? Math.max(1, Math.floor(state.totalContentLength / 4))
+          : 0;
+        const prompt = Math.floor(state.contextUsagePercentage * contextWindow / 100);
+        state.usage = {
+          ...(state.usage || {}),
+          prompt_tokens: prompt,
+          completion_tokens: completion,
+          total_tokens: prompt + completion
+        };
+      }
+      const finishReason = truncatedAfterOutput
+        ? "length"
+        : state.hasToolCalls
+          ? "tool_calls"
+          : disposition === "length"
+            ? "length"
+            : "stop";
+      controller.enqueue(sseChunk({}, finishReason, state.usage));
+      controller.enqueue(encoder.encode(SSE_DONE));
+      state.finished = true;
+      options.onTerminalState?.(diagnostics({
+        terminal_provenance: state.terminalProvenance || "clean_eventstream_eof",
+        transport_state: state.transportState,
+        // Report what this exit actually did, not the raw disposition. The
+        // integrity gate re-derives its verdict from stop_disposition, so
+        // reporting "terminal_incomplete" for a turn we deliberately kept made
+        // it discard the very bytes we just released to the client.
+        stop_disposition: truncatedAfterOutput ? "length" : disposition
+      }));
+    };
 
 		if (!response.body) {
 			const detail = diagnostics({
