@@ -374,6 +374,40 @@ export const PROVIDER_CAPABILITIES = {
     // published efforts from low/high/xhigh to low/high/max.
     "deepseek-v4.1-flash": { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 393216 },
   },
+  // CodeBuddy.ai (intl CLI gateway) — the same product publishes this table to
+  // the official CLI (product.json `models[]`: maxInputTokens -> contextWindow,
+  // maxOutputTokens -> maxOutput, supportsImages -> vision). Every model reasons
+  // through OpenAI-style reasoning_effort. `thinkingCanDisable` maps to the
+  // server's reasoning.canDisableThinking, NOT the inverse of onlyReasoning.
+  // Limit notes: contextWindow uses contextWindow.defaultLength where the model
+  // publishes supportedLengths (the gateway only grants the larger window when
+  // the request opts in, which this executor never does).
+  "codebuddy-intl": {
+    // Meta models: the server maps "Auto"/"Fast"/... onto the tier list.
+    "default-model":       { vision: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 176000, maxOutput: 24000 },
+    "fast-model":          { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 200000, maxOutput: 32000 },
+    "balanced-model":      { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 256000, maxOutput: 32000 },
+    "primary-model":       { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 272000, maxOutput: 72000 },
+    "deep-model":          { vision: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 176000, maxOutput: 24000 },
+    "glm-5.3":             { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 48000 },
+    "glm-5.3-flash":       { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 300000, maxOutput: 32000 },
+    "glm-5.2":             { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 48000 },
+    "kimi-k3":             { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 32000 },
+    // contextWindow is defaultLength (300000), not maxInputTokens — see above.
+    "kimi-k2.8-preview":   { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 300000, maxOutput: 32000 },
+    "kimi-k2.6":           { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 256000, maxOutput: 32000 },
+    "deepseek-v4.1-flash":    { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 300000, maxOutput: 128000 },
+    "deepseek-v4.1-flash-sg": { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 300000, maxOutput: 128000 },
+    "hy3":                 { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 192000, maxOutput: 64000 },
+    "hy4-preview":         { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 200000, maxOutput: 64000 },
+    "gemini-3.5-flash":    { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },
+    "gpt-6-astra":         { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 400000, maxOutput: 128000 },
+    "gpt-5.6-sol":         { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 128000 },
+    "gpt-5.6-terra":       { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 128000 },
+    "gpt-5.6-luna":        { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 128000 },
+    "gpt-5.5":             { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000 },
+    "gpt-5.4":             { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 272000, maxOutput: 72000 },
+  },
   // Poolside Laguna — OpenAI-compatible, all reasoning-capable (32K max output).
   "poolside": {
     "laguna-s-2.1":  { reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 32000 },

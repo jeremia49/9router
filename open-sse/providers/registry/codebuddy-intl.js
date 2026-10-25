@@ -1,6 +1,13 @@
-// CodeBuddy international (codebuddy.ai) — mirrors codebuddy-cn registry shape,
-// swapping the Tencent CN domain for the .ai endpoint set. All OAuth/plugin URLs
-// use the /v2/plugin prefix with platform=ide (CN uses platform=CLI).
+// CodeBuddy international (codebuddy.ai) — the official CLI's gateway.
+//
+// Wire behaviour mirrors `@tencent-ai/codebuddy-code` (the `codebuddy` CLI)
+// talking to https://www.codebuddy.ai. Everything here — UA, IDE headers,
+// `platform=CLI` on the OAuth endpoints, the model catalog — comes from that
+// client, NOT from the older IDE plugin (which used `platform=ide` and an
+// `IDE/2.x` User-Agent and is what this provider used to impersonate).
+//
+// `X-Conversation-*` / `X-Request-ID` / `X-Agent-*` / `extra_vars` are added per
+// request by CodeBuddyIntlExecutor (see open-sse/shared/codebuddyClient.js).
 export default {
   id: "codebuddy-intl",
   alias: "cbai",
@@ -20,16 +27,19 @@ export default {
   authModes: ["oauth", "apikey"],
   hasOAuth: true,
   transport: {
-    // Chat gateway is OpenAI-compatible SSE (same /v2/chat/completions path as CN).
+    // Chat gateway is OpenAI-compatible SSE on /v2/chat/completions.
     baseUrl: "https://www.codebuddy.ai/v2/chat/completions",
     forceStream: true,
-    // CodeBuddy intl speaks the same unified OpenAI reasoning_effort shape as CN.
+    // CodeBuddy is a unified OpenAI-compatible gateway: reasoning rides
+    // OpenAI-style reasoning_effort (not a vendor-native thinking shape).
     thinkingFormat: "openai",
     headers: {
-      "User-Agent": "IDE/2.108.1 CodeBuddy/2.108.1",
+      // CLI/2.175.0 CodeBuddy/2.175.0 — the default UA of @tencent-ai/codebuddy-code.
+      "User-Agent": "CLI/2.175.0 CodeBuddy/2.175.0",
       "X-Product": "SaaS",
-      "X-IDE-Type": "IDE",
-      "X-IDE-Name": "IDE",
+      "X-IDE-Type": "CLI",
+      "X-IDE-Name": "CLI",
+      "X-IDE-Version": "2.175.0",
       "x-requested-with": "XMLHttpRequest",
       "x-codebuddy-request": "1",
     },
@@ -38,38 +48,53 @@ export default {
       header: "Authorization",
       scheme: "bearer",
     },
-    // Intl billing endpoint mirrors CN shape (data.Response.Data.Accounts[]).
+    // Quota endpoint: the same Tencent billing payload as CN
+    // (data.Response.Data.Accounts[]). The path exists on codebuddy.ai — it
+    // answers 401 (APISIX) when unauthenticated rather than 404, i.e. the route
+    // is live — and the CLI's own quota view reads it through the same gateway.
     usage: {
       url: "https://www.codebuddy.ai/v2/billing/meter/get-user-resource",
     },
   },
-  // Same model lineup exposed by the CN gateway — intl backend is the same catalog.
+  // Catalog mirrors the `models[]` payload the gateway publishes to the CLI
+  // (product.json, snapshot 2026-10-24): id = wire id, maxInputTokens ->
+  // contextWindow, maxOutputTokens -> maxOutput, supportsImages -> vision.
+  // Meta-models ("Auto"/"Fast"/...) route server-side to the same catalog and
+  // are what the CLI actually sends by default.
   models: [
+    { id: "default-model", name: "Auto" },
+    { id: "fast-model", name: "Fast" },
+    { id: "balanced-model", name: "Balanced" },
+    { id: "primary-model", name: "Primary" },
+    { id: "deep-model", name: "Deep" },
+    { id: "glm-5.3", name: "GLM-5.3" },
+    { id: "glm-5.3-flash", name: "GLM-5.3-Flash" },
     { id: "glm-5.2", name: "GLM-5.2" },
-    { id: "glm-5.1", name: "GLM-5.1" },
-    { id: "glm-5.0", name: "GLM-5.0" },
-    { id: "glm-5.0-turbo", name: "GLM-5.0-Turbo" },
-    { id: "glm-5v-turbo", name: "GLM-5v-Turbo" },
-    { id: "glm-4.7", name: "GLM-4.7" },
-    { id: "minimax-m3", name: "MiniMax-M3" },
-    { id: "minimax-m2.7", name: "MiniMax-M2.7" },
-    { id: "kimi-k2.7", name: "Kimi-K2.7-Code" },
+    { id: "kimi-k3", name: "Kimi-K3" },
+    { id: "kimi-k2.8-preview", name: "Kimi-K2.8-Preview" },
     { id: "kimi-k2.6", name: "Kimi-K2.6" },
-    { id: "kimi-k2.5", name: "Kimi-K2.5" },
-    { id: "hy3-preview", name: "Hy3 Preview" },
-    { id: "deepseek-v4-pro", name: "DeepSeek-V4-Pro" },
-    // deepseek-v4-flash replaced server-side by deepseek-v4.1-flash (same
-    // catalog as CN; the old endpoint still answers 200 but the list is the contract).
     { id: "deepseek-v4.1-flash", name: "DeepSeek-V4.1-Flash" },
-    { id: "deepseek-v3-2-volc", name: "DeepSeek-V3.2" },
+    // Regional lane of the same model (priced differently on the server).
+    { id: "deepseek-v4.1-flash-sg", name: "DeepSeek-V4.1-Flash (SG)" },
+    { id: "hy3", name: "Hy3" },
+    { id: "hy4-preview", name: "Hy4-Preview" },
+    { id: "gemini-3.5-flash", name: "Gemini-3.5-Flash" },
+    { id: "gpt-6-astra", name: "GPT-6-Astra" },
+    { id: "gpt-5.6-sol", name: "GPT-5.6-Sol" },
+    { id: "gpt-5.6-terra", name: "GPT-5.6-Terra" },
+    { id: "gpt-5.6-luna", name: "GPT-5.6-Luna" },
+    { id: "gpt-5.5", name: "GPT-5.5" },
+    { id: "gpt-5.4", name: "GPT-5.4" },
   ],
   oauth: {
     baseUrl: "https://www.codebuddy.ai",
     stateUrl: "https://www.codebuddy.ai/v2/plugin/auth/state",
     tokenUrl: "https://www.codebuddy.ai/v2/plugin/auth/token",
     refreshUrl: "https://www.codebuddy.ai/v2/plugin/auth/token/refresh",
-    userAgent: "IDE/2.63.2 CodeBuddy/2.63.2",
-    platform: "ide",
+    accountUrl: "https://www.codebuddy.ai/v2/plugin/account",
+    // The CLI logs in with platform=CLI; the IDE plugin used platform=ide.
+    userAgent: "CLI/2.175.0 CodeBuddy/2.175.0",
+    platform: "CLI",
     pollInterval: 5000,
   },
   features: {

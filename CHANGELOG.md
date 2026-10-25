@@ -35,6 +35,7 @@
 - **STT**: add Codex OAuth transcription provider (`cx/transcribe`), reusing existing Codex OAuth chat connections with 24 kHz PCM16 WAV conversion and bounded private temp files (#5074)
 
 ## Fixes
+- **CodeBuddy.ai**: mirror the official `@tencent-ai/codebuddy-code` CLI instead of the retired IDE plugin — `CLI/2.175.0` UA + `platform=CLI` login, per-call `X-Conversation-ID`/`X-Request-ID`/`X-Agent-*` ids (fixes `11128 conversation id missing`), `extra_vars.harnessMetadata`, `stream_options.include_usage`, `cache_retention`, and preserve the caller's system prompt/history instead of replacing it; refresh the model catalog (glm-5.3/5.2, kimi-k3/k2.8, deepseek-v4.1-flash, gpt-5.x/6) with per-model capabilities and reasoning levels
 - **Combos**: advance past request-scoped 4xx rejections (validation, unsupported parameter, context overflow) instead of terminating combo (#5057)
 - **Combos**: fall through to next member when streaming response returns HTTP 200 but produces zero content frames (#ca7b540)
 - **Combos**: try next model when provider returns HTTP 400 for insufficient credits or balance too low (#4713)

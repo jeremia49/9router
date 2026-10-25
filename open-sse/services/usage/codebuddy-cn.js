@@ -1,8 +1,10 @@
 /**
- * CodeBuddy CN usage handler
+ * CodeBuddy usage handler (shared by codebuddy-cn and codebuddy-intl)
  *
- * Scoped to the "codebuddy-cn" provider specifically — a future "codebuddy-intl"
- * variant would get its own handler/endpoint, so keep this CN-only.
+ * Both gateways are the same product with different hosts: copilot.tencent.com
+ * (CN) and www.codebuddy.ai (intl, the `@tencent-ai/codebuddy-code` CLI). Each
+ * provider passes its own id, so the request goes to that provider's own
+ * `transport.usage.url` with its own headers/UA.
  *
  * Quota lives behind a Tencent billing endpoint (POST, payload wrapped twice
  * under data.Response.Data). It mixes two credit types that must NOT be merged:
@@ -62,21 +64,21 @@ async function getCodeBuddyUsage(providerId, accessToken, apiKey, providerSpecif
     }, proxyOptions);
 
     if (response.status === 401 || response.status === 403) {
-      return { message: "CodeBuddy CN credential invalid or expired." };
+      return { message: `CodeBuddy (${providerId}) credential invalid or expired.` };
     }
     if (!response.ok) {
-      return { message: `CodeBuddy CN quota API error (${response.status}).` };
+      return { message: `CodeBuddy (${providerId}) quota API error (${response.status}).` };
     }
 
     const json = await response.json();
     if (json?.code !== 0) {
-      return { message: `CodeBuddy CN quota error: ${json?.msg || "unknown"}` };
+      return { message: `CodeBuddy (${providerId}) quota error: ${json?.msg || "unknown"}` };
     }
 
     const data = json?.data?.Response?.Data || {};
     const accounts = Array.isArray(data.Accounts) ? data.Accounts : [];
     if (accounts.length === 0) {
-      return { message: "CodeBuddy CN connected. No credit package found." };
+      return { message: `CodeBuddy (${providerId}) connected. No credit package found.` };
     }
 
     const cycleEndMs = (acc) => {
