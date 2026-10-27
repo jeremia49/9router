@@ -212,6 +212,9 @@ function inspectSSEChunk(chunk, state) {
   }
 }
 
+// Resolve a missing profile once per access token for the lifetime of the process.
+const KIRO_PROFILE_ARN_CACHE = new Map();
+
 function regionFromKiroProfileArn(profileArn) {
   if (typeof profileArn !== "string") return "";
   const parts = profileArn.split(":");

@@ -10,7 +10,10 @@ const { KiroExecutor } = await import("../../open-sse/executors/kiro.js");
 const encoder = new TextEncoder();
 const credentials = {
   accessToken: "test-token",
-  providerSpecificData: { kiroToolCallRepair: true }
+  providerSpecificData: {
+    kiroToolCallRepair: true,
+    profileArn: "arn:aws:codewhisperer:us-east-1:123456789012:profile/test"
+  }
 };
 
 function crc32(bytes) {
@@ -115,7 +118,7 @@ async function text(stream) {
 async function execute(executor = new KiroExecutor(), overrides = {}) {
   return executor.execute({
     model: "kr/claude-opus-4.8",
-    body: { conversationState: { currentMessage: { userInputMessage: { content: "base", modelId: "m" } } } },
+    body: { profileArn: credentials.providerSpecificData.profileArn, conversationState: { currentMessage: { userInputMessage: { content: "base", modelId: "m" } } } },
     // Integrity recovery (buffer-until-EOF + bounded repair retry) is the
     // non-streaming path. Streaming clients bypass the gate for incremental
     // SSE, so these gate assertions run with stream:false.

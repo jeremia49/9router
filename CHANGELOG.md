@@ -9,6 +9,7 @@
 
 ## Fixes
 - **Server**: resolve the proxy-handling merge conflict while preserving loopback-only forwarding-header trust and authenticated peer-IP stamping.
+- **Kiro**: restore the profile-ARN cache declaration lost during rebase and keep terminal-integrity fixtures independent of profile discovery.
 - **CLI Tools**: stop the Pi card from resetting every `contextWindow`/`maxTokens` in `~/.pi/agent/models.json` on Apply, add per-model context-window and max-output selectors, and sanitize corrupt cap values instead of writing them back
 - **CLI Tools**: treat `name === id` as unset on Apply so a hand-edited Pi model label is no longer overwritten
 - **OpenCode**: normalize a caller tool that collides with the OpenCode fingerprint in place (keeping the caller's name and adopting the fingerprint schema) instead of aliasing it to `<name>_client` and restoring it on the response (#4971, #5011)
