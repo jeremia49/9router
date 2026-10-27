@@ -63,11 +63,30 @@ const PATTERN_THINKING = [
   // DeepSeek v4.* (Alibaba MaaS, probed live): effort low|medium|high|xhigh|max
   // all 200 via output_config.effort; "none" is a 400 on the anthropic route
   // (disable thinking instead). none kept for the picker = disable.
-  // ⚠️ The codebuddy-cn exact ids below MUST stay above this unqualified glob —
-  // PATTERN_THINKING is first-match-wins, so a later provider-qualified entry
-  // would never fire for dotted ids like deepseek-v4.1-flash.
+  // ⚠️ Provider-qualified codebuddy ids MUST stay above the unqualified
+  // *deepseek-v4.* glob — PATTERN_THINKING is first-match-wins, so a later
+  // provider-qualified entry would never fire for dotted ids like
+  // deepseek-v4.1-flash.
   { provider: "codebuddy-cn", pattern: "deepseek-v4-pro",     levels: ["low", "high", "xhigh"] },
   { provider: "codebuddy-cn", pattern: "deepseek-v4.1-flash", levels: ["low", "high", "max"] },
+  // codebuddy.ai (intl CLI gateway) per-model effort sets. The gateway publishes
+  // `reasoning.supportedEfforts` to the CLI; values outside a model's set are
+  // silently clamped server-side, so the declared set is authoritative for the
+  // picker. These exact ids MUST stay above the unqualified *deepseek-v4.* /
+  // *glm* / *kimi* globs (PATTERN_THINKING is first-match-wins).
+  { provider: "codebuddy-intl", pattern: "deepseek-v4.1-flash-sg", levels: ["low", "high", "max"] },
+  { provider: "codebuddy-intl", pattern: "deepseek-v4.1-flash",    levels: ["low", "high", "max"] },
+  { provider: "codebuddy-intl", pattern: "deepseek-v4*",           levels: ["low", "high", "max"] },
+  { provider: "codebuddy-intl", pattern: "glm-5.3-flash", levels: ["low", "high", "max"] },
+  { provider: "codebuddy-intl", pattern: "glm-5.3",       levels: ["low", "high", "max"] },
+  { provider: "codebuddy-intl", pattern: "glm-5.2",       levels: ["high", "xhigh"] },
+  { provider: "codebuddy-intl", pattern: "kimi-k2.8-preview", levels: ["low", "high", "max"] },
+  { provider: "codebuddy-intl", pattern: "hy4-preview",   levels: ["high"] },
+  { provider: "codebuddy-intl", pattern: "hy3",           levels: ["low", "high"] },
+  { provider: "codebuddy-intl", pattern: "gpt-6-astra",   levels: ["low", "medium", "high", "xhigh", "max"] },
+  { provider: "codebuddy-intl", pattern: "gpt-5.6-*",     levels: ["low", "medium", "high", "xhigh", "max"] },
+  { provider: "codebuddy-intl", pattern: "gpt-5.5",       levels: ["low", "medium", "high", "xhigh"] },
+  { provider: "codebuddy-intl", pattern: "gpt-5.4",       levels: ["low", "medium", "high", "xhigh"] },
   // OpenCode Zen free tier (oc / ocz) — the free id of the same v4.1-flash model
   // publishes low|high|max as well, and unlike DeepSeek's own API the upstream
   // forwards the level verbatim (no low→high collapse). The generic
@@ -75,7 +94,8 @@ const PATTERN_THINKING = [
   // not serve, so this entry MUST stay above it.
   { pattern: "*deepseek-v4.1-flash-free*", levels: ["low", "high", "max"] },
   { pattern: "*deepseek-v4.*", levels: ["none", "low", "medium", "high", "xhigh", "max"] },
-  // codebuddy-cn per-model effort sets — the server's product-config payload
+  // codebuddy-cn per-model effort sets (unreachable for dotted deepseek ids: the
+  // unqualified glob above matches first — kept for non-dotted ids and parity) — the server's product-config payload
   // publishes `reasoning.supportedEfforts` per model. NOTE: the chat endpoint
   // accepts any level you send (probed none/minimal/low/medium/high/xhigh/max
   // → all 200), but values outside a model's supportedEfforts are silently
@@ -88,8 +108,6 @@ const PATTERN_THINKING = [
   { provider: "codebuddy-cn", pattern: "kimi-k2.8-preview",  levels: ["low", "medium", "high"] },
   { provider: "codebuddy-cn", pattern: "hy3",          levels: ["low", "high"] },
   { provider: "codebuddy-cn", pattern: "hy4-preview",  levels: ["high"] },
-  // codebuddy-intl rides the same gateway catalog, so its deepseek levels match.
-  { provider: "codebuddy-intl", pattern: "deepseek-v4*", levels: ["low", "high", "xhigh"] },
   // MiniMax Code (mcode) — adaptive effort via output_config.effort. M3.1
   // always thinks (no none); M3 is switchable with none/high only, per the
   // magpie static catalog. M2.7 pair falls through to the claude-adaptive
