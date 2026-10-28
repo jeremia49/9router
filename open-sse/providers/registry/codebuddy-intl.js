@@ -47,6 +47,9 @@ export default {
       combined: true,
       header: "Authorization",
       scheme: "bearer",
+      // Channel check requires the plugin's request/conversation ids — without
+      // them upstream rejects with 400 / 11128 "request illegal".
+      hooks: ["codebuddyHeaders"],
     },
     // Quota endpoint: the same Tencent billing payload as CN
     // (data.Response.Data.Accounts[]). The path exists on codebuddy.ai — it
